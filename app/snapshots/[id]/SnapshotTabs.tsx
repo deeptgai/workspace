@@ -248,7 +248,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
               const count = tab.id === "all" ? signals.length : signals.filter((signal) => signal.kind === tab.id).length;
               return (
                 <button
-                  className={`group flex min-h-10 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-black transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800 ${
+                  className={`group flex min-h-10 cursor-pointer items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-black transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800 ${
                     activeTab === tab.id ? "border-emerald-200 bg-emerald-50 text-emerald-800 shadow-sm" : "border-transparent text-slate-600"
                   }`}
                   key={tab.id}
@@ -294,7 +294,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
               <div className="flex flex-wrap gap-1.5">
                 {tags.map((tag) => (
                   <button
-                    className={`min-h-10 flex-none rounded-full px-3 py-2 text-sm font-black transition duration-200 hover:-translate-y-0.5 hover:bg-emerald-50 hover:text-emerald-800 ${
+                    className={`min-h-10 flex-none cursor-pointer rounded-full px-3 py-2 text-sm font-black transition duration-200 hover:-translate-y-0.5 hover:bg-emerald-50 hover:text-emerald-800 ${
                       selectedTag === tag ? "bg-emerald-50 text-emerald-800 shadow-sm" : "bg-white text-slate-600"
                     }`}
                     key={tag}
@@ -385,7 +385,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
                       <div className="mt-3 flex flex-wrap gap-1.5">
                         {visibleSignalTags(signal).map((tag) => (
                           <button
-                            className="rounded-full bg-[#f4f0e7] px-2 py-1 text-xs font-black text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800"
+                          className="cursor-pointer rounded-full bg-[#f4f0e7] px-2 py-1 text-xs font-black text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-800"
                             key={tag}
                             type="button"
                             onClick={() => setSelectedTag(tag)}
