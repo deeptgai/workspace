@@ -83,6 +83,14 @@ export type SnapshotSignal = {
   person?: SnapshotSignalPerson;
 };
 
+export type ChannelSnapshotHeroTheme = {
+  palette: "emerald" | "indigo" | "amber" | "rose" | "slate" | "cyan";
+  motif: "network" | "notes" | "city" | "market" | "studio" | "landscape";
+  mood: string;
+  concept: string;
+  imagePrompt: string;
+};
+
 export type ChannelSnapshotSection = {
   id: ChannelSnapshotSectionId;
   title: string;
@@ -103,6 +111,7 @@ export type ChannelSnapshotDocument = {
     from: string | null;
     to: string | null;
   };
+  heroTheme?: ChannelSnapshotHeroTheme;
   signals: SnapshotSignal[];
 };
 

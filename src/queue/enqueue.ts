@@ -1,6 +1,6 @@
 import { createQueues } from "./queues.js";
 import { enqueueSourceSnapshotJob as enqueueSharedSourceSnapshotJob } from "./snapshotQueue.js";
-import type { SourceSnapshotJobData, CommentImportJobData, ContentEmbeddingJobData, TelegramImportJobData } from "./types.js";
+import type { SourceSnapshotJobData, SourceSnapshotSectionJobData, CommentImportJobData, ContentEmbeddingJobData, TelegramImportJobData } from "./types.js";
 
 function slug(value: string): string {
   return value.trim().replace(/^@/, "").toLowerCase().replace(/[^a-z0-9а-яё_-]+/giu, "-");
@@ -58,4 +58,16 @@ export async function enqueueContentEmbeddingJob(data: ContentEmbeddingJobData) 
 
 export async function enqueueSourceSnapshotJob(data: SourceSnapshotJobData) {
   return enqueueSharedSourceSnapshotJob(data);
+}
+
+export async function enqueueSourceSnapshotSectionJob(data: SourceSnapshotSectionJobData) {
+  const queues = createQueues();
+
+  try {
+    return await queues.sourceSnapshotSectionQueue.add("section", data, {
+      jobId: uniqueJobId(`snapshot-section-${data.sectionId}`, data.snapshotId),
+    });
+  } finally {
+    await closeQueues(queues);
+  }
 }

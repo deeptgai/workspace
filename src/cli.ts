@@ -507,6 +507,91 @@ program
   });
 
 program
+  .command("snapshot:section")
+  .description("Re-enqueue one section agent for an existing snapshot")
+  .argument("<snapshotId>", "Stored snapshot id")
+  .argument("<sectionId>", "Section id: ideas, pains, hypotheses, insights, materials, people, tools, places")
+  .action(async (snapshotId: string, sectionId: string) => {
+    try {
+      const { SIGNAL_AGENTS } = await import("./snapshots/communitySnapshot.js");
+      const definition = SIGNAL_AGENTS.find((section) => section.id === sectionId);
+
+      if (!definition) {
+        throw new Error(`Unknown snapshot section: ${sectionId}`);
+      }
+
+      const snapshot = await prisma.sourceSnapshot.findUnique({
+        where: {
+          id: snapshotId,
+        },
+        include: {
+          source: true,
+        },
+      });
+
+      if (!snapshot) {
+        throw new Error(`Snapshot not found: ${snapshotId}`);
+      }
+
+      await prisma.$transaction([
+        prisma.sourceSnapshot.update({
+          where: {
+            id: snapshotId,
+          },
+          data: {
+            status: "running",
+            error: null,
+            completedAt: null,
+          },
+        }),
+        prisma.sourceSnapshotSection.upsert({
+          where: {
+            snapshotId_sectionId: {
+              snapshotId,
+              sectionId,
+            },
+          },
+          create: {
+            snapshotId,
+            sectionId,
+            title: definition.title,
+            agent: definition.agent,
+            status: "pending",
+          },
+          update: {
+            title: definition.title,
+            agent: definition.agent,
+            status: "pending",
+            error: null,
+            startedAt: null,
+            completedAt: null,
+          },
+        }),
+      ]);
+
+      const { enqueueSourceSnapshotSectionJob } = await import("./queue/enqueue.js");
+      const chat = snapshot.source.username ? `@${snapshot.source.username}` : snapshot.source.title;
+      const job = await enqueueSourceSnapshotSectionJob({
+        chat,
+        snapshotId,
+        sectionId,
+      });
+
+      console.log("");
+      console.log("Snapshot section job enqueued.");
+      console.table([{
+        queue: "source-snapshot-section",
+        jobId: job.id,
+        snapshotId,
+        sectionId,
+        chat,
+      }]);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+program
   .command("snapshots")
   .description("Show stored source snapshots")
   .argument("<chat>", "Stored chat id, exact title, username, or @username")

@@ -6,6 +6,7 @@ import { searchMessages, type SearchMessageResult } from "../rag/searchMessages.
 import {
   CHANNEL_SNAPSHOT_SCHEMA_VERSION,
   type ChannelSnapshotDocument,
+  type ChannelSnapshotHeroTheme,
   type ChannelSnapshotItem,
   type ChannelSnapshotPeopleSegment,
   type ChannelSnapshotSection,
@@ -49,7 +50,11 @@ type SectionAgentOutput = {
   segments?: Array<Partial<ChannelSnapshotPeopleSegment>>;
 };
 
+type HeroThemeAgentOutput = Partial<ChannelSnapshotHeroTheme>;
+
 const ALLOWED_PRIORITIES = new Set<SnapshotItemPriority>(["high", "medium", "low"]);
+const HERO_PALETTES = ["emerald", "indigo", "amber", "rose", "slate", "cyan"] as const;
+const HERO_MOTIFS = ["network", "notes", "city", "market", "studio", "landscape"] as const;
 const STRUCTURAL_DISPLAY_TAGS = new Set([
   "идея",
   "идеи",
@@ -778,6 +783,149 @@ function buildSnapshotSignals(sections: ChannelSnapshotSection[]): SnapshotSigna
   });
 }
 
+function stableIndex(value: string, modulo: number) {
+  let hash = 0;
+
+  for (const char of value) {
+    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  }
+
+  return hash % modulo;
+}
+
+function fallbackHeroTheme(context: SnapshotContext): ChannelSnapshotHeroTheme {
+  const seed = `${context.chat.id}:${context.chat.username ?? ""}:${context.chat.title}`;
+  const palette = HERO_PALETTES[stableIndex(seed, HERO_PALETTES.length)];
+  const motif = HERO_MOTIFS[stableIndex(`${seed}:motif`, HERO_MOTIFS.length)];
+
+  return {
+    palette,
+    motif,
+    mood: "ясный, собранный, полезный",
+    concept: `Визуальная карта сигналов канала ${context.chat.title}`,
+    imagePrompt: [
+      "Editorial hero background for a Telegram channel insight map.",
+      `Channel: ${context.chat.title}.`,
+      "Mood: clear, premium, analytical.",
+      `Motif: ${motif}. Palette: ${palette}.`,
+      "No text, no logos, no UI, no people portraits.",
+    ].join(" "),
+  };
+}
+
+function normalizeHeroTheme(value: HeroThemeAgentOutput, context: SnapshotContext): ChannelSnapshotHeroTheme {
+  const fallback = fallbackHeroTheme(context);
+  const palette = typeof value.palette === "string" && (HERO_PALETTES as readonly string[]).includes(value.palette)
+    ? value.palette as ChannelSnapshotHeroTheme["palette"]
+    : fallback.palette;
+  const motif = typeof value.motif === "string" && (HERO_MOTIFS as readonly string[]).includes(value.motif)
+    ? value.motif as ChannelSnapshotHeroTheme["motif"]
+    : fallback.motif;
+  const mood = typeof value.mood === "string" && value.mood.trim()
+    ? value.mood.trim().slice(0, 140)
+    : fallback.mood;
+  const concept = typeof value.concept === "string" && value.concept.trim()
+    ? value.concept.trim().slice(0, 180)
+    : fallback.concept;
+  const imagePrompt = typeof value.imagePrompt === "string" && value.imagePrompt.trim()
+    ? value.imagePrompt.trim().slice(0, 700)
+    : fallback.imagePrompt;
+
+  return {
+    palette,
+    motif,
+    mood,
+    concept,
+    imagePrompt,
+  };
+}
+
+async function generateHeroTheme(
+  aiConfig: AiConfig,
+  context: SnapshotContext,
+  sections: ChannelSnapshotSection[],
+  signals: SnapshotSignal[],
+  options?: Pick<GenerateCommunitySnapshotOptions, "onLog">,
+): Promise<ChannelSnapshotHeroTheme> {
+  logAgent(options ?? {}, "tool:heroThemeAgent:start", {
+    sourceId: context.chat.id,
+    title: context.chat.title,
+  });
+
+  try {
+    const content = await createChatCompletion(aiConfig, [
+      {
+        role: "system",
+        content: [
+          "Ты VisualThemeAgent для мини-приложения вокруг Telegram-канала.",
+          "Твоя задача — предложить визуальную тему hero-блока для карты сигналов канала.",
+          "Пиши строго JSON object без Markdown.",
+          "Не генерируй картинку. Дай направление для UI и будущей image generation.",
+          "palette выбери строго из: emerald, indigo, amber, rose, slate, cyan.",
+          "motif выбери строго из: network, notes, city, market, studio, landscape.",
+          "imagePrompt пиши на английском для генератора изображений. Без текста, логотипов, интерфейса и портретов.",
+          "JSON schema:",
+          JSON.stringify({
+            palette: "emerald | indigo | amber | rose | slate | cyan",
+            motif: "network | notes | city | market | studio | landscape",
+            mood: "short Russian mood",
+            concept: "short Russian visual concept",
+            imagePrompt: "English image generation prompt",
+          }),
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          "Канал:",
+          JSON.stringify({
+            title: context.chat.title,
+            username: context.chat.username ? `@${context.chat.username}` : null,
+            type: context.chat.type,
+            messages: context.messageCount,
+            views: context.aggregate._sum.views ?? 0,
+            reactions: context.aggregate._sum.reactionsTotal ?? 0,
+            replies: context.aggregate._sum.repliesCount ?? 0,
+          }, null, 2),
+          "",
+          "Самые важные сигналы:",
+          signals.slice(0, 16).map((signal) => [
+            `- ${signal.kind}: ${signal.title}`,
+            signal.summary,
+            signal.tags.length ? `tags: ${signal.tags.join(", ")}` : "",
+          ].filter(Boolean).join(" | ")).join("\n") || "- none",
+          "",
+          "Сводки секций:",
+          sections.map((section) => `- ${section.title}: ${compactText(section.summary, 220)}`).join("\n"),
+        ].join("\n"),
+      },
+    ], { json: true });
+    const rawTheme = await parseJsonObject<HeroThemeAgentOutput>(aiConfig, content, (error) => {
+      logAgent(options ?? {}, "tool:heroThemeAgent.repairJson:start", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    const theme = normalizeHeroTheme(rawTheme, context);
+
+    logAgent(options ?? {}, "tool:heroThemeAgent:complete", {
+      palette: theme.palette,
+      motif: theme.motif,
+    });
+
+    return theme;
+  } catch (error) {
+    const theme = fallbackHeroTheme(context);
+
+    logAgent(options ?? {}, "tool:heroThemeAgent:fallback", {
+      error: error instanceof Error ? error.message : String(error),
+      palette: theme.palette,
+      motif: theme.motif,
+    });
+
+    return theme;
+  }
+}
+
 async function buildSnapshotContext(prisma: PrismaClient, chat: Source, embeddingsModel: string): Promise<SnapshotContext> {
   const peopleMessageKind = chat.type === "group" ? "post" : "comment";
   const [aggregate, topMessages, messageCount, embeddingCount, dateRange, topCommenterGroups] = await Promise.all([
@@ -1417,6 +1565,7 @@ async function completeSnapshotIfReady(
     return section ? [sectionFromDbRow(section)] : [];
   });
   const signals = buildSnapshotSignals(orderedSections);
+  const heroTheme = await generateHeroTheme(aiConfig, context, orderedSections, signals, options);
   const title = `Снимок по каналу: ${chat.title}`;
   const snapshotDocument: ChannelSnapshotDocument = {
     schemaVersion: CHANNEL_SNAPSHOT_SCHEMA_VERSION,
@@ -1429,6 +1578,7 @@ async function completeSnapshotIfReady(
       from: context.oldestMessageDate?.toISOString() ?? null,
       to: context.newestMessageDate?.toISOString() ?? null,
     },
+    heroTheme,
     signals,
   };
 
