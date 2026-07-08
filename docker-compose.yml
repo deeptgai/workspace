@@ -32,6 +32,31 @@ services:
       timeout: 5s
       retries: 10
 
+  seaweedfs:
+    image: ${SEAWEEDFS_IMAGE:-chrislusf/seaweedfs:3.85}
+    container_name: deeptg-seaweedfs
+    restart: unless-stopped
+    command:
+      - server
+      - -s3
+      - -dir=/data
+      - -ip=seaweedfs
+      - -ip.bind=0.0.0.0
+      - -master.port=${SEAWEEDFS_MASTER_PORT:-9333}
+      - -volume.port=${SEAWEEDFS_VOLUME_PORT:-8080}
+      - -filer.port=${SEAWEEDFS_FILER_PORT:-8888}
+      - -s3.port=${SEAWEEDFS_S3_PORT:-8333}
+    ports:
+      - "${SEAWEEDFS_S3_PUBLISHED_PORT:-8333}:${SEAWEEDFS_S3_PORT:-8333}"
+    volumes:
+      - seaweedfs_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8333/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
 volumes:
   postgres_data:
   redis_data:
+  seaweedfs_data:

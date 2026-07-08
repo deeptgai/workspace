@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
+import { Prisma } from "@prisma/client";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
@@ -8,6 +9,7 @@ import { findStoredSource } from "./db/sources.js";
 import { prisma } from "./db/prisma.js";
 import { backfillEngagementFromRawJson } from "./engagement/rawJson.js";
 import type { ImportMode } from "./import/importMessages.js";
+import { isChannelSnapshotDocument } from "./snapshots/sourceSnapshotSchema.js";
 
 const program = new Command();
 
@@ -589,6 +591,133 @@ program
     } finally {
       await prisma.$disconnect();
     }
+  });
+
+program
+  .command("signal:image")
+  .description("Generate a fal.ai preview image for one signal id and save it into the snapshot document")
+  .argument("<signalId>", "Signal id from snapshot.document.signals[].id")
+  .option("-s, --snapshot <snapshotId>", "Restrict lookup to one snapshot id")
+  .action(async (
+    signalId: string,
+    options: {
+      snapshot?: string;
+    },
+  ) => {
+    try {
+      const snapshots = await prisma.sourceSnapshot.findMany({
+        where: {
+          id: options.snapshot,
+          status: "completed",
+          document: {
+            not: Prisma.JsonNull,
+          },
+        },
+        include: {
+          source: true,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+        take: options.snapshot ? 1 : 50,
+      });
+
+      const snapshot = snapshots.find((candidate) => {
+        if (!isChannelSnapshotDocument(candidate.document)) {
+          return false;
+        }
+
+        return candidate.document.signals.some((signal) => signal.id === signalId);
+      });
+
+      if (!snapshot || !isChannelSnapshotDocument(snapshot.document)) {
+        const scope = options.snapshot ? ` in snapshot ${options.snapshot}` : " in the latest completed snapshots";
+        throw new Error(`Signal not found${scope}: ${signalId}`);
+      }
+
+      const signal = snapshot.document.signals.find((item) => item.id === signalId);
+
+      if (!signal) {
+        throw new Error(`Signal not found in snapshot ${snapshot.id}: ${signalId}`);
+      }
+
+      const { generateSignalPreviewImage } = await import("./images/falSignalPreview.js");
+      const { putObject, stableObjectKey } = await import("./storage/objectStorage.js");
+      const previewImage = await generateSignalPreviewImage(signal, {
+        chatTitle: snapshot.source.title,
+      });
+      const falImageResponse = await fetch(previewImage.url);
+
+      if (!falImageResponse.ok) {
+        throw new Error(`Cannot download fal image ${previewImage.url}: ${falImageResponse.status} ${await falImageResponse.text()}`);
+      }
+
+      const contentType = falImageResponse.headers.get("content-type") || previewImage.contentType || "image/jpeg";
+      const extension = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
+      const imageBytes = new Uint8Array(await falImageResponse.arrayBuffer());
+      const objectKey = stableObjectKey([snapshot.id, signal.id, previewImage.requestId ?? Date.now().toString()], extension);
+      const storedObject = await putObject(objectKey, imageBytes, contentType);
+      const storedPreviewImage = {
+        ...previewImage,
+        url: storedObject.url,
+        sourceUrl: previewImage.url,
+        storageProvider: "s3" as const,
+        bucket: storedObject.bucket,
+        objectKey: storedObject.key,
+        sizeBytes: storedObject.sizeBytes,
+        contentType: storedObject.contentType,
+      };
+      const updatedDocument = {
+        ...snapshot.document,
+        signals: snapshot.document.signals.map((item) => item.id === signalId
+          ? {
+              ...item,
+              previewImage: storedPreviewImage,
+            }
+          : item),
+      };
+
+      await prisma.sourceSnapshot.update({
+        where: {
+          id: snapshot.id,
+        },
+        data: {
+          document: updatedDocument as Prisma.InputJsonValue,
+        },
+      });
+
+      console.log("");
+      console.log("Signal preview image generated.");
+      console.table([{
+        snapshotId: snapshot.id,
+        signalId,
+        kind: signal.kind,
+        title: signal.title,
+        model: storedPreviewImage.model,
+        bucket: storedPreviewImage.bucket,
+        objectKey: storedPreviewImage.objectKey,
+        url: storedPreviewImage.url,
+      }]);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+program
+  .command("storage:bootstrap")
+  .description("Create required object storage buckets")
+  .action(async () => {
+    const { createBucketIfMissing, objectStorageConfig } = await import("./storage/objectStorage.js");
+    const config = objectStorageConfig();
+    const bucket = await createBucketIfMissing(config);
+
+    console.log("");
+    console.log("Object storage bootstrapped.");
+    console.table([{
+      endpoint: config.endpoint,
+      bucket,
+      publicBasePath: config.publicBasePath,
+    }]);
   });
 
 program

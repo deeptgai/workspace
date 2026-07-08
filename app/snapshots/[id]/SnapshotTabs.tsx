@@ -500,6 +500,15 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
                           </h3>
                         )}
 
+                        {signal.previewImage?.url ? (
+                          <img
+                            alt=""
+                            className="mt-3 aspect-[4/3] w-full rounded-md object-cover"
+                            loading="lazy"
+                            src={signal.previewImage.url}
+                          />
+                        ) : null}
+
                         <p className="m-0 mt-2 text-sm leading-6 text-slate-600">{cleanSnapshotText(signal.summary)}</p>
                       </div>
 
@@ -543,6 +552,13 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
 	              <div className="min-w-0">
 	                <span className={signalKindClass(activeSignal.kind)}>{kindLabels[activeSignal.kind]}</span>
 	                <h2 className="m-0 mt-2 text-2xl font-black leading-tight text-slate-950">{cleanSnapshotText(activeSignal.title)}</h2>
+	                {activeSignal.previewImage?.url ? (
+	                  <img
+	                    alt=""
+	                    className="mt-3 aspect-[4/3] max-h-64 w-full max-w-xl rounded-lg object-cover"
+	                    src={activeSignal.previewImage.url}
+	                  />
+	                ) : null}
 	                <p className="m-0 mt-2 max-w-3xl text-sm leading-6 text-slate-600">{cleanSnapshotText(activeSignal.summary)}</p>
 	                {visibleSignalTags(activeSignal).length ? (
 	                  <div className="mt-3 flex flex-wrap gap-1.5">

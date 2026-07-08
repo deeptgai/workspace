@@ -68,6 +68,23 @@ export type SnapshotSignalPerson = {
   segments?: string[];
 };
 
+export type SnapshotSignalPreviewImage = {
+  provider: "fal.ai";
+  model: string;
+  url: string;
+  sourceUrl?: string;
+  storageProvider?: "s3";
+  bucket?: string;
+  objectKey?: string;
+  sizeBytes?: number;
+  width?: number;
+  height?: number;
+  contentType?: string;
+  generatedAt: string;
+  prompt: string;
+  requestId?: string;
+};
+
 export type SnapshotSignal = {
   id: string;
   kind: SnapshotSignalKind;
@@ -81,6 +98,7 @@ export type SnapshotSignal = {
   evidence?: SnapshotEvidenceRef[];
   url?: string;
   person?: SnapshotSignalPerson;
+  previewImage?: SnapshotSignalPreviewImage;
 };
 
 export type ChannelSnapshotHeroTheme = {
