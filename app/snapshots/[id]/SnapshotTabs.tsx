@@ -300,10 +300,11 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
               {actorname ? (
                 <a
                   className="mb-3 inline-flex w-fit min-h-8 items-center rounded-full border border-white/25 bg-white/10 px-3 py-1.5 text-xs font-black text-white backdrop-blur transition duration-200 hover:bg-white/20 hover:text-white"
-                  href={`https://t.me/${actorname}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
+	                  href={`https://t.me/${actorname}`}
+	                  target="_blank"
+	                  rel="noreferrer"
+	                  style={{ color: "#fff" }}
+	                >
                   @{actorname}
                 </a>
               ) : null}
