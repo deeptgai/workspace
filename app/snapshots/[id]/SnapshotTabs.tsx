@@ -309,23 +309,17 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
           ) : null}
 
           <section className="motion-safe:animate-[snapshotFadeIn_420ms_ease-out]">
-            <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <h2 className="m-0 text-2xl font-black leading-tight text-slate-950">{currentTitle}</h2>
-                <div className="mt-1 text-sm font-bold text-slate-500">
-                  {formatNumber(filteredSignals.length)} карточек · посты открываются внутри приложения
-                </div>
-              </div>
-              {selectedTag ? (
+            {selectedTag ? (
+              <div className="mb-2 flex justify-end">
                 <button
-                  className="min-h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-black text-emerald-800 transition duration-200 hover:-translate-y-0.5 hover:bg-emerald-50"
+                  className="min-h-10 cursor-pointer rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-black text-emerald-800 transition duration-200 hover:-translate-y-0.5 hover:bg-emerald-50"
                   type="button"
                   onClick={() => setSelectedTag("")}
                 >
                   Сбросить фильтр
                 </button>
-              ) : null}
-            </div>
+              </div>
+            ) : null}
 
             {filteredSignals.length ? (
               <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
