@@ -356,7 +356,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
                             <h3 className="m-0 text-lg font-black leading-tight text-slate-950">
                               {signal.url ? (
                                 <a className="text-emerald-800 underline decoration-emerald-800/30 underline-offset-4 transition hover:text-emerald-950" href={signal.url} target="_blank" rel="noreferrer">
-                                  {cleanSnapshotText(signal.title)} <span className="text-xs no-underline">↗</span>
+                                  {cleanSnapshotText(signal.title)}
                                 </a>
                               ) : cleanSnapshotText(signal.title)}
                             </h3>
@@ -365,7 +365,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
                           <h3 className="m-0 mt-3 text-lg font-black leading-tight text-slate-950">
                             {signal.url ? (
                               <a className="text-emerald-800 underline decoration-emerald-800/30 underline-offset-4 transition hover:text-emerald-950" href={signal.url} target="_blank" rel="noreferrer">
-                                {cleanSnapshotText(signal.title)} <span className="text-xs no-underline">↗</span>
+                                {cleanSnapshotText(signal.title)}
                               </a>
                             ) : cleanSnapshotText(signal.title)}
                           </h3>
