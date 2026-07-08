@@ -504,14 +504,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
                     <ExternalLink size={15} />
                   </a>
                 ) : null}
-	                <button
-	                  className="min-h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-black text-emerald-800 transition hover:-translate-y-0.5 hover:bg-emerald-50"
-	                  type="button"
-	                  onClick={closeSignal}
-	                >
-	                  Вернуться к карте
-                </button>
-              </div>
+	              </div>
             </div>
           </aside>
         </div>
