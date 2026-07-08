@@ -224,9 +224,13 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
   const sourceItemUrl = activeMessage && actorname
     ? `https://t.me/${actorname}/${activeMessage.externalId}`
     : null;
+  const tabSignals = useMemo(
+    () => signals.filter((signal) => activeTab === "all" || signal.kind === activeTab),
+    [activeTab, signals],
+  );
   const tags = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const signal of signals) {
+    for (const signal of tabSignals) {
       for (const tag of visibleSignalTags(signal)) {
         counts.set(tag, (counts.get(tag) ?? 0) + 1);
       }
@@ -235,11 +239,10 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ru"))
       .slice(0, 12)
       .map(([tag]) => tag);
-  }, [signals]);
-  const filteredSignals = signals.filter((signal) => {
-    const byTab = activeTab === "all" || signal.kind === activeTab;
+  }, [tabSignals]);
+  const filteredSignals = tabSignals.filter((signal) => {
     const byTag = !selectedTag || visibleSignalTags(signal).includes(selectedTag);
-    return byTab && byTag;
+    return byTag;
   });
   const currentTitle = signalTabs.find((tab) => tab.id === activeTab)?.label ?? "Все";
   const selectTab = (tab: SnapshotSignalKind | "all") => {
