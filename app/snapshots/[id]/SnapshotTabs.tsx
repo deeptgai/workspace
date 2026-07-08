@@ -387,12 +387,13 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
                         <p className="m-0 mt-2 text-sm leading-6 text-slate-600">{cleanSnapshotText(signal.summary)}</p>
                       </div>
 
-	                      <div className="mt-3 flex flex-wrap gap-1.5">
+	                      <div className="mt-2 flex flex-wrap gap-1">
 	                        {visibleSignalTags(signal).map((tag) => (
 	                          <button
-                          className="cursor-pointer rounded-full border border-slate-200 bg-[#f4f0e7] px-1 py-0.5 text-[7px] font-semibold leading-[9px] text-slate-500 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"
+                          className="cursor-pointer rounded-full border border-slate-200 bg-[#f4f0e7] px-[3px] py-0 text-[6px] font-medium leading-[7px] text-slate-500 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"
 	                            key={tag}
 	                            type="button"
+	                            style={{ fontSize: "6px", lineHeight: "7px", padding: "0 3px" }}
 	                            onClick={(event) => {
 	                              event.stopPropagation();
 	                              setSelectedTag(tag);
