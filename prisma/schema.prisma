@@ -1,0 +1,179 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Source {
+  id            String    @id @default(cuid())
+  provider      String
+  externalId    String
+  type          String
+  title         String
+  username      String?
+  url           String?
+  audienceCount Int?
+  metadata      Json?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastImportAt  DateTime?
+
+  items        ContentItem[]
+  snapshots    SourceSnapshot[]
+  importStates SourceImportState[]
+
+  @@unique([provider, externalId])
+  @@index([provider])
+  @@index([type])
+  @@index([username])
+}
+
+model SourceImportState {
+  id               String    @id @default(cuid())
+  sourceId         String
+  provider         String
+  scope            String    @default("content")
+  oldestExternalId String?
+  newestExternalId String?
+  cursor           Json?
+  metadata         Json?
+  lastImportAt     DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  source Source @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, scope])
+  @@index([provider])
+  @@index([scope])
+}
+
+model Actor {
+  id          String   @id @default(cuid())
+  provider    String
+  externalId  String
+  username    String?
+  displayName String?
+  firstName   String?
+  lastName    String?
+  url         String?
+  photo       String?
+  isBot       Boolean?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items ContentItem[]
+
+  @@unique([provider, externalId])
+  @@index([provider])
+  @@index([username])
+}
+
+model ContentItem {
+  id                String   @id @default(cuid())
+  sourceId          String
+  actorId           String?
+  provider          String
+  externalId        String
+  kind              String   @default("post")
+  parentId          String?
+  title             String?
+  text              String?
+  url               String?
+  publishedAt       DateTime
+  replyToExternalId String?
+  views             Int?
+  forwards          Int?
+  reactionsTotal    Int      @default(0)
+  reactionCounts    Json?
+  repliesCount      Int      @default(0)
+  hasComments       Boolean  @default(false)
+  commentsPeerId    String?
+  engagementScore   Float    @default(0)
+  metrics           Json?
+  rawJson           Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  source     Source             @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  parent     ContentItem?       @relation("ContentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  children   ContentItem[]      @relation("ContentThread")
+  actor      Actor?             @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  embeddings ContentEmbedding[]
+
+  @@unique([provider, sourceId, externalId, kind])
+  @@index([sourceId, publishedAt])
+  @@index([sourceId, externalId])
+  @@index([sourceId, kind])
+  @@index([parentId])
+  @@index([sourceId, engagementScore])
+  @@index([actorId])
+  @@index([provider])
+}
+
+model ContentEmbedding {
+  id         String                @id @default(cuid())
+  itemId     String
+  model      String
+  dimensions Int
+  textHash   String
+  embedding  Unsupported("vector")
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
+
+  item ContentItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, model])
+  @@index([model])
+  @@index([itemId])
+}
+
+model SourceSnapshot {
+  id          String    @id @default(cuid())
+  sourceId    String
+  kind        String
+  title       String
+  status      String    @default("pending")
+  document    Json?
+  error       String?
+  model       String
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  source   Source                  @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  sections SourceSnapshotSection[]
+
+  @@index([sourceId, createdAt])
+  @@index([kind])
+  @@index([status])
+}
+
+model SourceSnapshotSection {
+  id          String    @id @default(cuid())
+  snapshotId  String
+  sectionId   String
+  title       String
+  agent       String
+  status      String    @default("pending")
+  summary     String?
+  items       Json?
+  segments    Json?
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  snapshot SourceSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, sectionId])
+  @@index([snapshotId, status])
+  @@index([sectionId])
+  @@index([status])
+}

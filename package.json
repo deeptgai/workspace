@@ -1,0 +1,41 @@
+{
+  "name": "deeptg",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.cli.json",
+    "dev": "tsx src/cli.ts",
+    "dev:web": "next dev",
+    "build:web": "next build",
+    "start:web": "next start",
+    "dev:worker": "tsx src/worker.ts",
+    "cli": "node dist/cli.js",
+    "worker": "node dist/worker.js",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.0",
+    "@radix-ui/react-accordion": "^1.2.15",
+    "@tailwindcss/postcss": "^4.3.2",
+    "bullmq": "^5.79.2",
+    "commander": "^14.0.0",
+    "dotenv": "^17.2.3",
+    "lucide-react": "^1.23.0",
+    "next": "^16.2.10",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "tailwindcss": "^4.3.2",
+    "telegram": "^2.26.22"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "prisma": "^6.19.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
