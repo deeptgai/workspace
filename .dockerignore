@@ -1,0 +1,11 @@
+node_modules
+.next
+dist
+.git
+.github
+.surge-dist
+.env
+*.tsbuildinfo
+anatoly_tolkit-*.html
+*-context.md
+npm-debug.log*
