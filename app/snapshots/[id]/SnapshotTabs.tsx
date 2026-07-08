@@ -25,6 +25,7 @@ import type {
   SnapshotSignal,
   SnapshotSignalKind,
 } from "../../../src/snapshots/sourceSnapshotSchema";
+import { sortSignalsDescending } from "../../../src/snapshots/signalOrdering";
 
 type EvidenceMessage = {
   externalId: string;
@@ -385,7 +386,7 @@ function heroBackground(snapshot: ChannelSnapshotDocument) {
 export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, initialActiveSignalId, basePath }: SnapshotTabsProps) {
   const pathname = usePathname();
   const snapshotPath = basePath ?? pathname;
-  const signals = snapshot.signals;
+  const signals = useMemo(() => sortSignalsDescending(snapshot.signals), [snapshot.signals]);
   const [activeTab, setActiveTab] = useState<SnapshotSignalKind | "all">("all");
   const [selectedTag, setSelectedTag] = useState("");
   const [activeSignalId, setActiveSignalId] = useState<string | null>(() =>

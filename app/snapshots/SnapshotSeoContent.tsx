@@ -4,6 +4,7 @@ import type {
   SnapshotSignal,
   SnapshotSignalKind,
 } from "../../src/snapshots/sourceSnapshotSchema";
+import { sortSignalsDescending } from "../../src/snapshots/signalOrdering";
 
 type SeoEvidenceMessage = {
   externalId: string;
@@ -66,7 +67,7 @@ function signalDate(signal: SnapshotSignal) {
 }
 
 function sectionSignals(snapshot: ChannelSnapshotDocument, kind: SnapshotSignalKind) {
-  return snapshot.signals.filter((signal) => signal.kind === kind);
+  return sortSignalsDescending(snapshot.signals.filter((signal) => signal.kind === kind));
 }
 
 export function SnapshotSeoContent({ snapshot, evidenceMessages }: SnapshotSeoContentProps) {
