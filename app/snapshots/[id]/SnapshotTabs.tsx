@@ -263,10 +263,10 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
       <section className="grid items-start gap-4 lg:grid-cols-[248px_minmax(0,1fr)]">
         <aside className="sticky top-4 z-20 rounded-lg border border-slate-200 bg-white/90 p-3 shadow-sm backdrop-blur-xl">
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <b className="block text-sm font-black text-slate-950">Карта сигналов</b>
-            <span className="mt-1 block text-xs font-bold text-slate-500">
-              {formatNumber(signals.length)} signals · {formatNumber(evidenceMessages.length)} evidence
-            </span>
+	            <b className="block text-sm font-black text-slate-950">Карта сигналов</b>
+	            <span className="mt-1 block text-xs font-bold text-slate-500">
+	              {formatNumber(signals.length)} сигналов · {formatNumber(evidenceMessages.length)} подтверждений
+	            </span>
           </div>
           <nav className="mt-3 grid grid-cols-2 gap-1.5 lg:grid-cols-1" aria-label="Разделы сигналов">
             {signalTabs.map((tab) => {
@@ -492,7 +492,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
                 </div>
 	              ) : (
 	                <div className="rounded-lg border border-dashed border-slate-200 bg-white p-8 text-center text-slate-500">
-	                  У этого сигнала нет загруженных evidence-постов.
+	                  У этого сигнала нет загруженных постов-подтверждений.
 	                </div>
 	              )}
 
