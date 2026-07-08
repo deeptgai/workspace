@@ -290,7 +290,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
           </section>
 
           {tags.length ? (
-            <section className="sticky top-0 z-10 my-3 motion-safe:animate-[snapshotFadeIn_360ms_ease-out]" aria-label="Фильтры по тегам">
+            <section className="my-3 motion-safe:animate-[snapshotFadeIn_360ms_ease-out]" aria-label="Фильтры по тегам">
               <div className="flex flex-wrap gap-1.5">
                 {tags.map((tag) => (
                   <button
