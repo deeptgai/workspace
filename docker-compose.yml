@@ -40,7 +40,7 @@ services:
       - server
       - -s3
       - -dir=/data
-      - -ip=seaweedfs
+      - -ip=${SEAWEEDFS_IP:-localhost}
       - -ip.bind=0.0.0.0
       - -master.port=${SEAWEEDFS_MASTER_PORT:-9333}
       - -volume.port=${SEAWEEDFS_VOLUME_PORT:-8080}
