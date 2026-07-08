@@ -3,8 +3,11 @@ export const CHANNEL_SNAPSHOT_SCHEMA_VERSION = "channel-snapshot-v3";
 export type ChannelSnapshotSectionId =
   | "ideas"
   | "pains"
+  | "risks"
   | "hypotheses"
   | "insights"
+  | "trends"
+  | "events"
   | "materials"
   | "people"
   | "tools"
@@ -25,8 +28,11 @@ export type SnapshotMetric = {
 export type SnapshotSignalKind =
   | "idea"
   | "pain"
+  | "risk"
   | "hypothesis"
   | "insight"
+  | "trend"
+  | "event"
   | "material"
   | "tool"
   | "place"

@@ -4,13 +4,16 @@ import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import {
   BookOpen,
+  CalendarDays,
   ExternalLink,
+  AlertTriangle,
   Lightbulb,
   MapPin,
   MessageCircleQuestion,
   Network,
   Sparkles,
   Target,
+  TrendingUp,
   Users,
   Wrench,
   X,
@@ -78,8 +81,11 @@ const signalTabs: Array<{ id: SnapshotSignalKind | "all"; label: string }> = [
   { id: "all", label: "Все" },
   { id: "idea", label: "Идеи" },
   { id: "pain", label: "Боли" },
+  { id: "risk", label: "Риски" },
   { id: "hypothesis", label: "Гипотезы" },
   { id: "insight", label: "Инсайты" },
+  { id: "trend", label: "Тренды" },
+  { id: "event", label: "События" },
   { id: "material", label: "Материалы" },
   { id: "tool", label: "Инструменты" },
   { id: "place", label: "Места" },
@@ -90,8 +96,11 @@ const signalTabIcons: Record<SnapshotSignalKind | "all", LucideIcon> = {
   all: Network,
   idea: Lightbulb,
   pain: Target,
+  risk: AlertTriangle,
   hypothesis: MessageCircleQuestion,
   insight: Sparkles,
+  trend: TrendingUp,
+  event: CalendarDays,
   material: BookOpen,
   tool: Wrench,
   place: MapPin,
@@ -101,8 +110,11 @@ const signalTabIcons: Record<SnapshotSignalKind | "all", LucideIcon> = {
 const kindLabels: Record<SnapshotSignalKind, string> = {
   idea: "идея",
   pain: "боль",
+  risk: "риск",
   hypothesis: "гипотеза",
   insight: "инсайт",
+  trend: "тренд",
+  event: "событие",
   material: "материал",
   tool: "инструмент",
   place: "место",
@@ -114,10 +126,16 @@ const structuralTags = new Set([
   "идеи",
   "боль",
   "боли",
+  "риск",
+  "риски",
   "гипотеза",
   "гипотезы",
   "инсайт",
   "инсайты",
+  "тренд",
+  "тренды",
+  "событие",
+  "события",
   "материал",
   "материалы",
   "инструмент",
@@ -128,8 +146,11 @@ const structuralTags = new Set([
   "люди",
   "idea",
   "pain",
+  "risk",
   "hypothesis",
   "insight",
+  "trend",
+  "event",
   "material",
   "tool",
   "place",
@@ -234,8 +255,11 @@ function signalKindClass(kind: SnapshotSignalKind) {
   const styles: Record<SnapshotSignalKind, string> = {
     idea: "bg-emerald-50 text-emerald-800",
     pain: "bg-rose-50 text-rose-800",
+    risk: "bg-orange-50 text-orange-800",
     hypothesis: "bg-violet-50 text-violet-800",
     insight: "bg-blue-50 text-blue-800",
+    trend: "bg-cyan-50 text-cyan-800",
+    event: "bg-slate-100 text-slate-800",
     material: "bg-blue-50 text-blue-800",
     tool: "bg-amber-50 text-amber-800",
     place: "bg-rose-50 text-rose-800",
@@ -377,7 +401,9 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
   );
   const activeSignal = activeSignalId ? signals.find((signal) => signal.id === activeSignalId) ?? null : null;
   const activeSignalEvidence = useMemo(() => uniqueEvidence(activeSignal?.evidence), [activeSignal]);
-  const activeEvidence = activeSignalEvidence.find((evidence) => evidence.itemId === activeEvidenceItemId) ?? activeSignalEvidence[0] ?? null;
+  const activeEvidence = activeEvidenceItemId
+    ? activeSignalEvidence.find((evidence) => evidence.itemId === activeEvidenceItemId) ?? null
+    : null;
   const activeMessage = activeEvidence ? evidenceById.get(activeEvidence.itemId) : null;
   const sourceItemUrl = activeMessage && actorname
     ? `https://t.me/${actorname}/${activeMessage.externalId}`
@@ -437,10 +463,14 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
   const selectTab = (tab: SnapshotSignalKind | "all") => {
     setActiveTab(tab);
     setSelectedTag("");
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
   };
   const openSignal = (signal: SnapshotSignal, evidence?: SnapshotEvidenceRef) => {
     setActiveSignalId(signal.id);
-    setActiveEvidenceItemId(evidence?.itemId ?? uniqueEvidence(signal.evidence)[0]?.itemId ?? null);
+    setActiveEvidenceItemId(evidence?.itemId ?? null);
     window.history.pushState({ signalId: signal.id }, "", signalHref(signal.id));
   };
   const closeSignal = () => {
@@ -466,11 +496,8 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
     <>
       <section className="grid items-start gap-4 lg:grid-cols-[248px_minmax(0,1fr)]">
         <aside className="sticky top-4 z-20 rounded-lg border border-slate-200 bg-white/90 p-3 shadow-sm backdrop-blur-xl">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-	            <b className="block text-sm font-black text-slate-950">Карта сигналов</b>
-	            <span className="mt-1 block text-xs font-bold text-slate-500">
-	              {formatNumber(signals.length)} сигналов
-	            </span>
+          <div className="px-1 py-2">
+	            <b className="block text-base font-black text-slate-950">Карта сигналов</b>
           </div>
           <nav className="mt-3 grid grid-cols-2 gap-1.5 lg:grid-cols-1" aria-label="Разделы сигналов">
             {signalTabs.map((tab) => {
@@ -549,6 +576,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
               <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
 	                {filteredSignals.map((signal, index) => {
 	                  const person = findSignalPerson(signal, people);
+                    const timelineBadges = signalTimelineBadges(signal);
 
                   return (
 	                    <article
@@ -569,11 +597,16 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
                           Открыть сигнал: {cleanSnapshotText(signal.title)}
                         </a>
 	                      <div>
-	                        {activeTab === "all" ? (
-	                          <div className="flex items-start">
-	                            <span className={signalKindClass(signal.kind)}>{kindLabels[signal.kind]}</span>
-	                          </div>
-	                        ) : null}
+	                        <div className="flex min-h-7 items-start justify-between gap-2">
+                            {activeTab === "all" ? (
+                              <span className={signalKindClass(signal.kind)}>{kindLabels[signal.kind]}</span>
+                            ) : (
+                              <span />
+                            )}
+                            {timelineBadges[0] ? (
+                              <span className="flex-none rounded-full bg-slate-50 px-2 py-1 text-[11px] font-black text-slate-500 ring-1 ring-slate-200">{timelineBadges[0]}</span>
+                            ) : null}
+                          </div>
 
                         {signal.kind === "person" ? (
                           <div className="mt-3 flex items-center gap-2">
@@ -599,14 +632,6 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
                             ) : cleanSnapshotText(signal.title)}
                           </h3>
                         )}
-
-                        {signalTimelineBadges(signal).length ? (
-                          <div className="mt-2 flex flex-wrap gap-1">
-                            {signalTimelineBadges(signal).slice(0, 2).map((label) => (
-                              <span className="rounded-full bg-slate-50 px-2 py-1 text-[11px] font-black text-slate-500" key={label}>{label}</span>
-                            ))}
-                          </div>
-                        ) : null}
 
                         {shouldShowPreviewImage(signal) ? (
                           <img
@@ -660,28 +685,6 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
 	              <div className="min-w-0">
 	                <span className={signalKindClass(activeSignal.kind)}>{kindLabels[activeSignal.kind]}</span>
 	                <h2 className="m-0 mt-2 text-2xl font-black leading-tight text-slate-950">{cleanSnapshotText(activeSignal.title)}</h2>
-	                {shouldShowPreviewImage(activeSignal) ? (
-	                  <img
-	                    alt=""
-	                    className="mt-3 aspect-[4/3] max-h-64 w-full max-w-xl rounded-lg object-cover"
-	                    src={activeSignal.previewImage?.url}
-	                  />
-	                ) : null}
-	                <p className="m-0 mt-2 max-w-3xl text-sm leading-6 text-slate-600">{cleanSnapshotText(activeSignal.summary)}</p>
-	                {signalTimelineBadges(activeSignal).length ? (
-	                  <div className="mt-3 flex flex-wrap gap-1.5">
-	                    {signalTimelineBadges(activeSignal).map((label) => (
-	                      <span className="rounded-full bg-white px-2 py-1 text-xs font-black text-slate-600 ring-1 ring-slate-200" key={label}>{label}</span>
-	                    ))}
-	                  </div>
-	                ) : null}
-	                {visibleSignalTags(activeSignal).length ? (
-	                  <div className="mt-3 flex flex-wrap gap-1.5">
-	                    {visibleSignalTags(activeSignal).map((tag) => (
-	                      <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs font-black text-slate-600" key={tag}>{tag}</span>
-	                    ))}
-	                  </div>
-	                ) : null}
 	              </div>
 	              <button
 	                className="grid h-10 w-10 flex-none cursor-pointer place-items-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-rose-50 hover:text-rose-700"
@@ -694,8 +697,20 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
 	            </header>
 	
 	            <div className="min-h-0 overflow-auto p-4">
+                <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1" role="tablist" aria-label="Содержимое сигнала">
+                  <button
+                    className={`min-h-10 flex-none cursor-pointer rounded-lg border px-3 py-2 text-sm font-black transition hover:-translate-y-0.5 ${
+                      activeEvidenceItemId === null ? "border-emerald-200 bg-emerald-50 text-emerald-800 shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"
+                    }`}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeEvidenceItemId === null}
+                    onClick={() => setActiveEvidenceItemId(null)}
+                  >
+                    Содержание
+                  </button>
 	              {activeSignalEvidence.length ? (
-	                <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1" role="tablist" aria-label="Посты сигнала">
+	                  <>
 	                  {activeSignalEvidence.map((evidence, index) => {
 	                    const isActive = activeEvidence?.itemId === evidence.itemId;
 	                    return (
@@ -713,48 +728,78 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
 	                      </button>
 	                    );
 	                  })}
-	                </div>
+                    </>
 	              ) : null}
-
-	              {activeMessage ? (
-	                <div className="mb-3 flex flex-wrap gap-1.5">
-	                  <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">{formatDateTime(activeMessage.publishedAt)}</span>
-	                  <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">{formatNumber(activeMessage.views)} просмотров</span>
-	                  <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">{formatNumber(activeMessage.reactionsTotal)} реакций</span>
-	                  <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">рейтинг {activeMessage.engagementScore.toFixed(2)}</span>
-	                </div>
-	              ) : null}
-
-	              {activeEvidence?.reason ? (
-	                <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm leading-6 text-emerald-950">
-	                  <b className="block text-xs uppercase tracking-[0.12em] text-emerald-800">Почему это важно</b>
-	                  {cleanSnapshotText(activeEvidence.reason)}
-	                </div>
-	              ) : null}
-	
-	              {activeMessage ? (
-	                <div className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-white p-4 text-[15px] leading-7 text-slate-700">
-                  {activeMessage.text || "У сообщения нет текстового содержимого."}
                 </div>
-	              ) : (
-	                <div className="rounded-lg border border-dashed border-slate-200 bg-white p-8 text-center text-slate-500">
-	                  У этого сигнала нет загруженных постов-подтверждений.
-	                </div>
-	              )}
 
-              <div className="mt-3 flex flex-wrap gap-2">
-	                {sourceItemUrl ? (
-	                  <a
-	                    className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-black text-sky-700 shadow-sm transition hover:-translate-y-0.5 hover:border-sky-300 hover:bg-sky-100 hover:text-sky-900"
-	                    href={sourceItemUrl}
-	                    target="_blank"
-	                    rel="noreferrer"
-	                  >
-	                    <ExternalLink size={15} />
-	                    Открыть в Telegram
-	                  </a>
-	                ) : null}
-	              </div>
+                {activeEvidenceItemId === null ? (
+                  <div>
+                    {shouldShowPreviewImage(activeSignal) ? (
+                      <img
+                        alt=""
+                        className="aspect-[4/3] max-h-[420px] w-full rounded-lg object-cover"
+                        src={activeSignal.previewImage?.url}
+                      />
+                    ) : null}
+                    <p className="m-0 mt-3 max-w-3xl text-base leading-7 text-slate-700">{cleanSnapshotText(activeSignal.summary)}</p>
+                    {signalTimelineBadges(activeSignal).length ? (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {signalTimelineBadges(activeSignal).map((label) => (
+                          <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600 ring-1 ring-slate-200" key={label}>{label}</span>
+                        ))}
+                      </div>
+                    ) : null}
+                    {visibleSignalTags(activeSignal).length ? (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {visibleSignalTags(activeSignal).map((tag) => (
+                          <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs font-black text-slate-600" key={tag}>{tag}</span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <>
+                    {activeMessage ? (
+                      <div className="mb-3 flex flex-wrap gap-1.5">
+                        <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">{formatDateTime(activeMessage.publishedAt)}</span>
+                        <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">{formatNumber(activeMessage.views)} просмотров</span>
+                        <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">{formatNumber(activeMessage.reactionsTotal)} реакций</span>
+                        <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">рейтинг {activeMessage.engagementScore.toFixed(2)}</span>
+                      </div>
+                    ) : null}
+
+                    {activeEvidence?.reason ? (
+                      <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm leading-6 text-emerald-950">
+                        <b className="block text-xs uppercase tracking-[0.12em] text-emerald-800">Почему это важно</b>
+                        {cleanSnapshotText(activeEvidence.reason)}
+                      </div>
+                    ) : null}
+
+                    {activeMessage ? (
+                      <div className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-white p-4 text-[15px] leading-7 text-slate-700">
+                        {activeMessage.text || "У сообщения нет текстового содержимого."}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-slate-200 bg-white p-8 text-center text-slate-500">
+                        У этого сигнала нет загруженного поста-подтверждения.
+                      </div>
+                    )}
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {sourceItemUrl ? (
+                        <a
+                          className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-black text-sky-700 shadow-sm transition hover:-translate-y-0.5 hover:border-sky-300 hover:bg-sky-100 hover:text-sky-900"
+                          href={sourceItemUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <ExternalLink size={15} />
+                          Открыть в Telegram
+                        </a>
+                      ) : null}
+                    </div>
+                  </>
+                )}
             </div>
           </aside>
         </div>

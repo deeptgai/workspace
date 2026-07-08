@@ -3,8 +3,11 @@ import type { SnapshotSignal, SnapshotSignalPreviewImage } from "../snapshots/so
 export const PREVIEW_IMAGE_SIGNAL_KINDS = new Set<SnapshotSignal["kind"]>([
   "idea",
   "pain",
+  "risk",
   "hypothesis",
   "insight",
+  "trend",
+  "event",
   "material",
   "tool",
   "place",
@@ -113,8 +116,11 @@ function visualRecipe(signal: SnapshotSignal) {
   const kindMetaphors: Record<SnapshotSignal["kind"], string> = {
     idea: "new concept, spark, prototype, switch, seed, blueprint",
     pain: "friction, bottleneck, tangled wire, cracked surface, blocked path",
+    risk: "fragile bridge, warning signal, exposed edge, protective barrier, unstable stack, storm boundary",
     hypothesis: "experiment without measuring instruments, branching roots, forked path, two unmarked vessels, contrasting natural samples",
     insight: "revealed pattern, prism, opened box, lens, highlighted trace",
+    trend: "rising contour, repeated pattern, directional flow, seasonal layers, shifting tide, growth rings",
+    event: "milestone object, opened gate, calendar-like rhythm without text, meeting point, completed step, marked path",
     material: "book, video frame, article clipping, bookmark, study note",
     tool: "instrument, control panel, lever, precise device, workshop object",
     place: "location mood, map pin, weather, landmark fragment, path",

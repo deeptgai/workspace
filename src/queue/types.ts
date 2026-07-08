@@ -40,3 +40,8 @@ export type SourceSnapshotSectionJobData = {
   snapshotId: string;
   sectionId: string;
 };
+
+export type SignalPreviewImageJobData = {
+  snapshotId: string;
+  signalId: string;
+};

@@ -512,7 +512,7 @@ program
   .command("snapshot:section")
   .description("Re-enqueue one section agent for an existing snapshot")
   .argument("<snapshotId>", "Stored snapshot id")
-  .argument("<sectionId>", "Section id: ideas, pains, hypotheses, insights, materials, people, tools, places")
+  .argument("<sectionId>", "Section id: ideas, pains, risks, hypotheses, insights, trends, events, materials, people, tools, places")
   .action(async (snapshotId: string, sectionId: string) => {
     try {
       const { SIGNAL_AGENTS } = await import("./snapshots/communitySnapshot.js");
@@ -715,82 +715,71 @@ program
         throw new Error(`Signal not found${scope}: ${signalId}`);
       }
 
-      const signal = snapshot.document.signals.find((item) => item.id === signalId);
+      const { generateAndStoreSignalPreviewImage } = await import("./images/signalPreviewImages.js");
+      const result = await generateAndStoreSignalPreviewImage(prisma, snapshot.id, signalId, {
+        skipExisting: false,
+      });
 
-      if (!signal) {
-        throw new Error(`Signal not found in snapshot ${snapshot.id}: ${signalId}`);
-      }
-
-      const { canGenerateSignalPreview, generateSignalPreviewImage } = await import("./images/falSignalPreview.js");
-      const { putObject, stableObjectKey } = await import("./storage/objectStorage.js");
-
-      if (!canGenerateSignalPreview(signal)) {
+      if (result.status === "skipped") {
         console.log("");
         console.log("Signal preview image skipped.");
         console.table([{
           snapshotId: snapshot.id,
           signalId,
-          kind: signal.kind,
-          title: signal.title,
-          reason: "Preview image generation is disabled for this signal kind.",
+          kind: result.kind,
+          title: result.title,
+          reason: result.reason,
         }]);
         return;
       }
-
-      const previewImage = await generateSignalPreviewImage(signal, {
-        chatTitle: snapshot.source.title,
-      });
-      const falImageResponse = await fetch(previewImage.url);
-
-      if (!falImageResponse.ok) {
-        throw new Error(`Cannot download fal image ${previewImage.url}: ${falImageResponse.status} ${await falImageResponse.text()}`);
-      }
-
-      const contentType = falImageResponse.headers.get("content-type") || previewImage.contentType || "image/jpeg";
-      const extension = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
-      const imageBytes = new Uint8Array(await falImageResponse.arrayBuffer());
-      const objectKey = stableObjectKey([snapshot.id, signal.id, previewImage.requestId ?? Date.now().toString()], extension);
-      const storedObject = await putObject(objectKey, imageBytes, contentType);
-      const storedPreviewImage = {
-        ...previewImage,
-        url: storedObject.url,
-        sourceUrl: previewImage.url,
-        storageProvider: "s3" as const,
-        bucket: storedObject.bucket,
-        objectKey: storedObject.key,
-        sizeBytes: storedObject.sizeBytes,
-        contentType: storedObject.contentType,
-      };
-      const updatedDocument = {
-        ...snapshot.document,
-        signals: snapshot.document.signals.map((item) => item.id === signalId
-          ? {
-              ...item,
-              previewImage: storedPreviewImage,
-            }
-          : item),
-      };
-
-      await prisma.sourceSnapshot.update({
-        where: {
-          id: snapshot.id,
-        },
-        data: {
-          document: updatedDocument as Prisma.InputJsonValue,
-        },
-      });
 
       console.log("");
       console.log("Signal preview image generated.");
       console.table([{
         snapshotId: snapshot.id,
         signalId,
-        kind: signal.kind,
-        title: signal.title,
-        model: storedPreviewImage.model,
-        bucket: storedPreviewImage.bucket,
-        objectKey: storedPreviewImage.objectKey,
-        url: storedPreviewImage.url,
+        kind: result.kind,
+        title: result.title,
+        model: result.previewImage.model,
+        bucket: result.previewImage.bucket,
+        objectKey: result.previewImage.objectKey,
+        url: result.previewImage.url,
+      }]);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+program
+  .command("snapshot:images:enqueue")
+  .description("Enqueue fal.ai preview image jobs for all supported signals without images in a snapshot")
+  .argument("<snapshotId>", "Completed source snapshot id")
+  .action(async (snapshotId: string) => {
+    try {
+      const snapshot = await prisma.sourceSnapshot.findUnique({
+        where: {
+          id: snapshotId,
+        },
+      });
+
+      if (!snapshot || !isChannelSnapshotDocument(snapshot.document)) {
+        throw new Error(`Snapshot document not found or not completed: ${snapshotId}`);
+      }
+
+      const { canGenerateSignalPreview } = await import("./images/falSignalPreview.js");
+      const { enqueueSignalPreviewImageJob } = await import("./queue/enqueue.js");
+      const signals = snapshot.document.signals.filter((signal) => canGenerateSignalPreview(signal) && !signal.previewImage?.url);
+      const jobs = await Promise.all(signals.map((signal) => enqueueSignalPreviewImageJob({
+        snapshotId,
+        signalId: signal.id,
+      })));
+
+      console.log("");
+      console.log("Signal preview image jobs enqueued.");
+      console.table([{
+        snapshotId,
+        enqueued: jobs.length,
+        totalSignals: snapshot.document.signals.length,
       }]);
     } finally {
       await prisma.$disconnect();

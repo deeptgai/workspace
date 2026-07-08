@@ -3,6 +3,8 @@ import { createChatCompletion } from "../ai/chatClient.js";
 import type { AiConfig } from "../ai/config.js";
 import { loadEmbeddingsConfig } from "../embeddings/config.js";
 import { searchMessages, type SearchMessageResult } from "../rag/searchMessages.js";
+import { canGenerateSignalPreview } from "../images/falSignalPreview.js";
+import { enqueueSignalPreviewImageJob } from "../queue/enqueue.js";
 import {
   CHANNEL_SNAPSHOT_SCHEMA_VERSION,
   type ChannelSnapshotDocument,
@@ -61,10 +63,16 @@ const STRUCTURAL_DISPLAY_TAGS = new Set([
   "идеи",
   "боль",
   "боли",
+  "риск",
+  "риски",
   "гипотеза",
   "гипотезы",
   "инсайт",
   "инсайты",
+  "тренд",
+  "тренды",
+  "событие",
+  "события",
   "материал",
   "материалы",
   "инструмент",
@@ -78,8 +86,11 @@ const STRUCTURAL_DISPLAY_TAGS = new Set([
   "peer",
   "idea",
   "pain",
+  "risk",
   "hypothesis",
   "insight",
+  "trend",
+  "event",
   "material",
   "tool",
   "place",
@@ -125,6 +136,15 @@ const ALLOWED_METRIC_KEYS = new Set([
   "audience_fit",
   "discussion_prompt",
   "tg_post_idea",
+  "risk_level",
+  "risk_trigger",
+  "risk_mitigation",
+  "trend_direction",
+  "trend_driver",
+  "trend_window",
+  "event_date",
+  "event_type",
+  "event_outcome",
 ]);
 
 type SnapshotAggregate = {
@@ -208,6 +228,14 @@ export const SIGNAL_AGENTS: SignalAgentDefinition[] = [
     maxItems: 8,
   },
   {
+    id: "risks",
+    title: "Риски",
+    agent: "RiskSignalAgent",
+    query: "risks threats weak signals failure modes constraints blockers reputation legal financial operational risk",
+    instruction: "Найди риски: что может сломаться, ухудшить результат, создать потери, конфликт, репутационный или операционный ущерб. Формулируй как наблюдаемый риск с причиной, возможным последствием и мягкой мерой снижения. Не драматизируй и не выдумывай угрозы без evidence.",
+    maxItems: 7,
+  },
+  {
     id: "hypotheses",
     title: "Гипотезы",
     agent: "HypothesisSignalAgent",
@@ -221,6 +249,22 @@ export const SIGNAL_AGENTS: SignalAgentDefinition[] = [
     agent: "InsightSignalAgent",
     query: "insights conclusions learnings non obvious lessons takeaways what works why it matters",
     instruction: "Найди неочевидные выводы и уроки, которые можно применить без чтения всей ленты. Инсайт должен быть сильнее пересказа: формулируй как вывод из нескольких наблюдений или сильного поста.",
+    maxItems: 8,
+  },
+  {
+    id: "trends",
+    title: "Тренды",
+    agent: "TrendSignalAgent",
+    query: "trends patterns shifts repeated signals dynamics market audience behavior technology changes",
+    instruction: "Найди тренды и повторяющиеся сдвиги: что меняется со временем в темах автора, аудитории, рынке, технологиях, каналах продаж или поведении подписчиков. Тренд должен опираться на несколько наблюдений или явный тезис автора, а не быть единичным фактом.",
+    maxItems: 7,
+  },
+  {
+    id: "events",
+    title: "События",
+    agent: "EventSignalAgent",
+    query: "events launches meetings deals milestones announcements dates happened completed started won closed moved",
+    instruction: "Найди события: конкретные произошедшие или запланированные моменты, сделки, запуски, встречи, переезды, публикации, достижения, дедлайны. Каждое событие должно иметь понятный контекст, дату/период из evidence, участников или значение для читателя.",
     maxItems: 8,
   },
   {
@@ -708,12 +752,24 @@ function sectionSignalKind(sectionId: ChannelSnapshotSectionId): SnapshotSignalK
     return "pain";
   }
 
+  if (sectionId === "risks") {
+    return "risk";
+  }
+
   if (sectionId === "hypotheses") {
     return "hypothesis";
   }
 
   if (sectionId === "insights") {
     return "insight";
+  }
+
+  if (sectionId === "trends") {
+    return "trend";
+  }
+
+  if (sectionId === "events") {
+    return "event";
   }
 
   if (sectionId === "materials") {
@@ -1231,7 +1287,7 @@ async function runSectionAgent(
         "priority может быть только: high, medium, low.",
         "tags пиши как 2-5 коротких человекочитаемых меток на русском: 1-2 слова, без предложений, без itemId, без технических ключей, без snake_case, без английских machine tags. Бренды и технологии можно писать как в оригинале.",
         "tags должны описывать тему, контекст или сегмент карточки: например AI, CRM, найм, фокус, книга, Youtube, стратегия, Петербург, продажи, редактура. Не копируй длинные названия постов, ссылок, инструментов или материалов целиком.",
-        "tags не должны повторять раздел меню или тип сигнала: идея/идеи, боль/боли, гипотеза/гипотезы, инсайт/инсайты, материал/материалы, инструмент/инструменты, место/места, человек/люди, профиль/profile/peer.",
+        "tags не должны повторять раздел меню или тип сигнала: идея/идеи, боль/боли, риск/риски, гипотеза/гипотезы, инсайт/инсайты, тренд/тренды, событие/события, материал/материалы, инструмент/инструменты, место/места, человек/люди, профиль/profile/peer.",
         "metrics.key выбирай только из списка: profile, pain, lead_signal, offer, outreach_reason, intro_reason, helper_signal, question_signal, solution_need, contractor_need, similarity_reason, impact, effort, priority_reason, topic_strength, demand_signal, commercial_potential, content_pattern, recommendation_type, recommendation_source, recommended_action, mention_type, mentioned_entity, why_it_matters, source_context, time_window, digest_signal, learning_type, learning_asset, positioning_angle, author_thesis, audience_fit, discussion_prompt, tg_post_idea.",
         "metric.label можешь писать на русском для чтения человеком, но UI не будет использовать label для логики.",
         "Не выдумывай факты. Любой важный вывод должен ссылаться на itemId из evidence.",
@@ -1560,12 +1616,37 @@ async function completeSnapshotIfReady(
     snapshotId,
     sections: sections.length,
   });
+  const storedSnapshot = await prisma.sourceSnapshot.findUnique({
+    where: {
+      id: snapshotId,
+    },
+    select: {
+      document: true,
+    },
+  });
+  const previousDocument = storedSnapshot?.document &&
+    typeof storedSnapshot.document === "object" &&
+    !Array.isArray(storedSnapshot.document) &&
+    storedSnapshot.document.snapshotType === "channel" &&
+    Array.isArray(storedSnapshot.document.signals)
+    ? storedSnapshot.document as ChannelSnapshotDocument
+    : null;
+  const previousSignalsById = new Map((previousDocument?.signals ?? []).map((signal) => [signal.id, signal]));
   const context = await buildSnapshotContext(prisma, chat, embeddingsModel);
   const orderedSections = SECTION_ORDER.flatMap((sectionId) => {
     const section = sections.find((candidate) => candidate.sectionId === sectionId);
     return section ? [sectionFromDbRow(section)] : [];
   });
-  const signals = await enrichSignalsWithTimeline(prisma, chat.id, buildSnapshotSignals(orderedSections));
+  const signals = (await enrichSignalsWithTimeline(prisma, chat.id, buildSnapshotSignals(orderedSections))).map((signal) => {
+    const previousSignal = previousSignalsById.get(signal.id);
+
+    return previousSignal?.previewImage && !signal.previewImage
+      ? {
+          ...signal,
+          previewImage: previousSignal.previewImage,
+        }
+      : signal;
+  });
   const heroTheme = await generateHeroTheme(aiConfig, context, orderedSections, signals, options);
   const title = `Снимок по каналу: ${chat.title}`;
   const snapshotDocument: ChannelSnapshotDocument = {
@@ -1580,6 +1661,7 @@ async function completeSnapshotIfReady(
       to: context.newestMessageDate?.toISOString() ?? null,
     },
     heroTheme,
+    coverImage: previousDocument?.coverImage,
     signals,
   };
 
@@ -1600,4 +1682,23 @@ async function completeSnapshotIfReady(
   logAgent(options ?? {}, "tool:completeSnapshotIfReady:complete", {
     snapshotId,
   });
+  const previewSignals = signals.filter((signal) => canGenerateSignalPreview(signal) && !signal.previewImage?.url);
+
+  try {
+    await Promise.all(previewSignals.map((signal) => enqueueSignalPreviewImageJob({
+      snapshotId,
+      signalId: signal.id,
+    })));
+
+    logAgent(options ?? {}, "tool:signalPreviewImages:enqueued", {
+      snapshotId,
+      count: previewSignals.length,
+    });
+  } catch (error) {
+    logAgent(options ?? {}, "tool:signalPreviewImages:enqueueFailed", {
+      snapshotId,
+      count: previewSignals.length,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }

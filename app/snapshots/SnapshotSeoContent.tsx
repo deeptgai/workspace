@@ -24,8 +24,11 @@ type SnapshotSeoContentProps = {
 const kindLabels: Record<SnapshotSignalKind, string> = {
   idea: "Идея",
   pain: "Боль",
+  risk: "Риск",
   hypothesis: "Гипотеза",
   insight: "Инсайт",
+  trend: "Тренд",
+  event: "Событие",
   material: "Материал",
   tool: "Инструмент",
   place: "Место",
