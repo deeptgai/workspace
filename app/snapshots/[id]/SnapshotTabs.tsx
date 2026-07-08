@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import {
   BookOpen,
@@ -201,6 +201,21 @@ function signalTimelineBadges(signal: SnapshotSignal) {
   ].filter((item): item is string => Boolean(item));
 
   return [...new Set(labels)].slice(0, 2);
+}
+
+function signalYear(signal: SnapshotSignal) {
+  const value = signal.timeline?.lastEvidenceAt ??
+    signal.timeline?.firstEvidenceAt ??
+    signal.timeline?.firstPostAt ??
+    signal.timeline?.firstCommentAt;
+
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime()) ? null : String(date.getFullYear());
 }
 
 function shouldShowPreviewImage(signal: SnapshotSignal) {
@@ -578,22 +593,32 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
 	                {filteredSignals.map((signal, index) => {
 	                  const person = findSignalPerson(signal, people);
                     const timelineBadges = signalTimelineBadges(signal);
+                    const year = signalYear(signal) ?? "Без даты";
+                    const previousYear = index > 0 ? signalYear(filteredSignals[index - 1]) ?? "Без даты" : null;
+                    const showYearDivider = year !== previousYear;
 
                   return (
-	                    <article
-	                      className="group relative flex min-h-[190px] cursor-pointer flex-col justify-between rounded-lg border border-slate-200 bg-white p-3 shadow-sm transition duration-200 hover:-translate-y-1 hover:border-emerald-200 hover:shadow-lg motion-safe:animate-[snapshotFadeIn_320ms_ease-out]"
-	                      key={signal.id}
-	                      role="button"
-	                      tabIndex={0}
-	                      onClick={() => openSignal(signal)}
-	                      onKeyDown={(event) => {
-	                        if (event.key === "Enter" || event.key === " ") {
-	                          event.preventDefault();
-	                          openSignal(signal);
-	                        }
-	                      }}
-	                      style={{ animationDelay: `${Math.min(index * 28, 240)}ms` }}
-	                    >
+                      <Fragment key={signal.id}>
+                        {showYearDivider ? (
+                          <div className="col-span-full flex items-center gap-3 py-2 first:pt-0" aria-label={`Сигналы за ${year}`}>
+                            <span className="h-px flex-1 bg-slate-200" />
+                            <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-black text-slate-500 shadow-sm">{year}</span>
+                            <span className="h-px flex-1 bg-slate-200" />
+                          </div>
+                        ) : null}
+	                      <article
+	                        className="group relative flex min-h-[190px] cursor-pointer flex-col justify-between rounded-lg border border-slate-200 bg-white p-3 shadow-sm transition duration-200 hover:-translate-y-1 hover:border-emerald-200 hover:shadow-lg motion-safe:animate-[snapshotFadeIn_320ms_ease-out]"
+	                        role="button"
+	                        tabIndex={0}
+	                        onClick={() => openSignal(signal)}
+	                        onKeyDown={(event) => {
+	                          if (event.key === "Enter" || event.key === " ") {
+	                            event.preventDefault();
+	                            openSignal(signal);
+	                          }
+	                        }}
+	                        style={{ animationDelay: `${Math.min(index * 28, 240)}ms` }}
+	                      >
                         <a className="sr-only" href={signalHref(signal.id)}>
                           Открыть сигнал: {cleanSnapshotText(signal.title)}
                         </a>
@@ -662,6 +687,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
                         ))}
                       </div>
                     </article>
+                  </Fragment>
                   );
                 })}
               </div>
