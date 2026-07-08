@@ -50,31 +50,34 @@ type SectionAgentOutput = {
 };
 
 const ALLOWED_PRIORITIES = new Set<SnapshotItemPriority>(["high", "medium", "low"]);
-const ALLOWED_TAGS = new Set<SnapshotItemTag>([
-  "has_pain",
-  "buyer_intent",
-  "objection",
-  "asks_advice",
-  "service_need",
-  "budget_signal",
-  "decision_maker",
-  "active_commenter",
-  "helpful_member",
-  "strong_question",
-  "looking_for_solution",
-  "looking_for_contractor",
-  "intro_candidate",
-  "similar_to_reader",
-  "content_pattern",
-  "tool_mention",
-  "product_mention",
-  "author_recommendation",
-  "knowledge_asset",
-  "weekly_highlight",
-  "positioning_signal",
-  "discussion_seed",
-  "commercial_opportunity",
-  "action_required",
+const STRUCTURAL_DISPLAY_TAGS = new Set([
+  "идея",
+  "идеи",
+  "боль",
+  "боли",
+  "гипотеза",
+  "гипотезы",
+  "инсайт",
+  "инсайты",
+  "материал",
+  "материалы",
+  "инструмент",
+  "инструменты",
+  "место",
+  "места",
+  "человек",
+  "люди",
+  "профиль",
+  "profile",
+  "peer",
+  "idea",
+  "pain",
+  "hypothesis",
+  "insight",
+  "material",
+  "tool",
+  "place",
+  "person",
 ]);
 const ALLOWED_METRIC_KEYS = new Set([
   "profile",
@@ -448,9 +451,36 @@ function normalizeTags(value: unknown): SnapshotItemTag[] | undefined {
     return undefined;
   }
 
-  const tags = [...new Set(value.filter((tag): tag is SnapshotItemTag =>
-    typeof tag === "string" && ALLOWED_TAGS.has(tag as SnapshotItemTag),
-  ))];
+  const seen = new Set<string>();
+  const tags: SnapshotItemTag[] = [];
+
+  for (const rawTag of value) {
+    if (typeof rawTag !== "string") {
+      continue;
+    }
+
+    const tag = rawTag.replace(/\s+/g, " ").trim();
+    const normalized = tag.toLowerCase();
+
+    if (
+      !tag ||
+      tag.length > 24 ||
+      tag.split(/\s+/).length > 3 ||
+      tag.includes("_") ||
+      /^\d+$/.test(tag) ||
+      STRUCTURAL_DISPLAY_TAGS.has(normalized) ||
+      seen.has(normalized)
+    ) {
+      continue;
+    }
+
+    seen.add(normalized);
+    tags.push(tag);
+
+    if (tags.length >= 5) {
+      break;
+    }
+  }
 
   return tags.length ? tags : undefined;
 }
@@ -699,65 +729,18 @@ function sectionSignalKind(sectionId: ChannelSnapshotSectionId): SnapshotSignalK
   return null;
 }
 
-const snapshotTagLabels: Record<SnapshotItemTag, string> = {
-  has_pain: "боль",
-  buyer_intent: "спрос",
-  objection: "возражение",
-  asks_advice: "совет",
-  service_need: "услуга",
-  budget_signal: "бюджет",
-  decision_maker: "decision maker",
-  active_commenter: "активный",
-  helpful_member: "помогает",
-  strong_question: "сильный вопрос",
-  looking_for_solution: "ищет решение",
-  looking_for_contractor: "ищет подрядчика",
-  intro_candidate: "нетворк",
-  similar_to_reader: "peer",
-  content_pattern: "контент",
-  tool_mention: "инструмент",
-  product_mention: "продукт",
-  author_recommendation: "рекомендация",
-  knowledge_asset: "материал",
-  weekly_highlight: "highlight",
-  positioning_signal: "позиционирование",
-  discussion_seed: "обсуждение",
-  commercial_opportunity: "возможность",
-  action_required: "действие",
-};
-
 function signalTags(section: ChannelSnapshotSection, item: ChannelSnapshotItem, kind: SnapshotSignalKind) {
-  const tags = [
-    ...(item.tags ?? []).map((tag) => snapshotTagLabels[tag] ?? tag),
-  ].map((tag) => tag.trim()).filter((tag) => {
+  const tags = (item.tags ?? []).map((tag) => tag.trim()).filter((tag) => {
     if (!tag) {
       return false;
     }
 
     const normalized = tag.toLowerCase();
-    return ![
-      "идея",
-      "идеи",
-      "боль",
-      "боли",
-      "гипотеза",
-      "гипотезы",
-      "инсайт",
-      "инсайты",
-      "материал",
-      "материалы",
-      "инструмент",
-      "инструменты",
-      "место",
-      "места",
-      "человек",
-      "люди",
-      "профиль",
-      "profile",
-      "peer",
-      section.title.toLowerCase(),
-      kind,
-    ].includes(normalized);
+
+    return !STRUCTURAL_DISPLAY_TAGS.has(normalized) &&
+      normalized !== section.title.toLowerCase() &&
+      normalized !== kind &&
+      !tag.includes("_");
   }).filter((tag) => tag.length <= 24 && tag.split(/\s+/).length <= 3);
 
   return [...new Set(tags)].slice(0, 7);
@@ -1095,16 +1078,18 @@ async function runSectionAgent(
         `Ты ${definition.agent}.`,
         "Ты извлекаешь одну группу сигналов из Telegram-канала для карты пользы.",
         "Пиши строго на русском, кроме названий брендов, компаний, технологий и username.",
-        "Для машинной логики используй только формализованные поля: priority, tags и metrics.key. Не кодируй смысл в русском label.",
+        "Для машинной логики используй только формализованные поля: priority и metrics.key. tags являются только короткими UI-метками для фильтрации карточек человеком.",
         "priority может быть только: high, medium, low.",
-        "tags выбирай только из списка: has_pain, buyer_intent, objection, asks_advice, service_need, budget_signal, decision_maker, active_commenter, helpful_member, strong_question, looking_for_solution, looking_for_contractor, intro_candidate, similar_to_reader, content_pattern, tool_mention, product_mention, author_recommendation, knowledge_asset, weekly_highlight, positioning_signal, discussion_seed, commercial_opportunity, action_required.",
+        "tags пиши как 2-5 коротких человекочитаемых меток на русском: 1-2 слова, без предложений, без itemId, без технических ключей, без snake_case, без английских machine tags. Бренды и технологии можно писать как в оригинале.",
+        "tags должны описывать тему, контекст или сегмент карточки: например AI, CRM, найм, фокус, книга, Youtube, стратегия, Петербург, продажи, редактура. Не копируй длинные названия постов, ссылок, инструментов или материалов целиком.",
+        "tags не должны повторять раздел меню или тип сигнала: идея/идеи, боль/боли, гипотеза/гипотезы, инсайт/инсайты, материал/материалы, инструмент/инструменты, место/места, человек/люди, профиль/profile/peer.",
         "metrics.key выбирай только из списка: profile, pain, lead_signal, offer, outreach_reason, intro_reason, helper_signal, question_signal, solution_need, contractor_need, similarity_reason, impact, effort, priority_reason, topic_strength, demand_signal, commercial_potential, content_pattern, recommendation_type, recommendation_source, recommended_action, mention_type, mentioned_entity, why_it_matters, source_context, time_window, digest_signal, learning_type, learning_asset, positioning_angle, author_thesis, audience_fit, discussion_prompt, tg_post_idea.",
         "metric.label можешь писать на русском для чтения человеком, но UI не будет использовать label для логики.",
         "Не выдумывай факты. Любой важный вывод должен ссылаться на itemId из evidence.",
         "Не пиши itemId, post id, chat id, channel id, user id, provider id, отрицательные id вида -100... или технические ссылки в summary, title, description, score или metrics. Идентификаторы сообщений указывай только в массиве evidence.",
         "Для людей используй только конкретных пользователей из People/commenter signals. Не создавай сегменты, архетипы или группы аудитории.",
         definition.id === "people"
-          ? "Для people-сигналов верни три слоя данных: items как конкретные люди, tags для социальных подборок и segments как группы людей. Каждый item должен быть строго одним конкретным человеком из People/commenter signals. Обязательно верни actorExternalId точно как в People/commenter signals. Если есть username, верни personUsername без @. personName верни из personName. Не пиши items вида 'Сегмент: ...'. Не объединяй нескольких людей в один item. Для каждого человека определи социальные роли только по evidence: intro_candidate если с ним стоит познакомиться, helpful_member если он помогает/отвечает/делится опытом, strong_question если задает сильные вопросы, looking_for_solution если ищет решение/совет/инструмент, looking_for_contractor если ищет подрядчика/услугу/исполнителя, similar_to_reader если профиль похож на типичного активного читателя канала или полезен для peer networking. В metrics используй keys: profile, pain, lead_signal, offer, outreach_reason, intro_reason, helper_signal, question_signal, solution_need, contractor_need, similarity_reason. segments называй и объясняй по Post/comment segment candidates. Сделай примерно 5-8 осмысленных сегментов: не 3-5 слишком общих групп и не один сегмент на каждый пост. Люди могут быть в нескольких сегментах, это нормально. Backend сам добавит всех людей из этих постовых кандидатов, поэтому не пытайся вручную перечислить всех actorExternalIds. Для теплоты лида используй priority: high/medium/low. Добавляй tags has_pain, buyer_intent, asks_advice, service_need, budget_signal, decision_maker, active_commenter только когда это подтверждено evidence."
+          ? "Для people-сигналов верни три слоя данных: items как конкретные люди, tags как короткие темы/интересы человека и segments как группы людей. Каждый item должен быть строго одним конкретным человеком из People/commenter signals. Обязательно верни actorExternalId точно как в People/commenter signals. Если есть username, верни personUsername без @. personName верни из personName. Не пиши items вида 'Сегмент: ...'. Не объединяй нескольких людей в один item. Социальные роли и причину знакомства описывай в metrics с keys: profile, pain, lead_signal, offer, outreach_reason, intro_reason, helper_signal, question_signal, solution_need, contractor_need, similarity_reason. tags для людей должны быть сегментами интересов, например AI, CRM, нетворк, найм, продажи, фокус, Петербург, образование; не используй profile, peer, активный, человек. segments называй и объясняй по Post/comment segment candidates. Сделай примерно 5-8 осмысленных сегментов: не 3-5 слишком общих групп и не один сегмент на каждый пост. Люди могут быть в нескольких сегментах, это нормально. Backend сам добавит всех людей из этих постовых кандидатов, поэтому не пытайся вручную перечислить всех actorExternalIds. Для теплоты лида используй priority: high/medium/low."
           : "",
         "Верни только JSON object без Markdown и без code fence.",
         "JSON schema:",
@@ -1119,7 +1104,7 @@ async function runSectionAgent(
             personName: "string optional",
             score: "short human-readable label optional",
             priority: "high | medium | low optional",
-            tags: ["has_pain | buyer_intent | objection | asks_advice | service_need | budget_signal | decision_maker | active_commenter | helpful_member | strong_question | looking_for_solution | looking_for_contractor | intro_candidate | similar_to_reader | content_pattern | tool_mention | product_mention | author_recommendation | knowledge_asset | weekly_highlight | positioning_signal | discussion_seed | commercial_opportunity | action_required"],
+            tags: ["короткий UI-тег 1-2 слова", "например: AI", "например: найм"],
             confidence: "number 0..1",
             metrics: [{ key: "stable_machine_key", label: "human readable label", value: "string" }],
             evidence: [{ itemId: "source item external id", quote: "short quote optional", reason: "why this evidence matters" }],

@@ -34,31 +34,7 @@ export type SnapshotSignalKind =
 
 export type SnapshotItemPriority = "high" | "medium" | "low";
 
-export type SnapshotItemTag =
-  | "has_pain"
-  | "buyer_intent"
-  | "objection"
-  | "asks_advice"
-  | "service_need"
-  | "budget_signal"
-  | "decision_maker"
-  | "active_commenter"
-  | "helpful_member"
-  | "strong_question"
-  | "looking_for_solution"
-  | "looking_for_contractor"
-  | "intro_candidate"
-  | "similar_to_reader"
-  | "content_pattern"
-  | "tool_mention"
-  | "product_mention"
-  | "author_recommendation"
-  | "knowledge_asset"
-  | "weekly_highlight"
-  | "positioning_signal"
-  | "discussion_seed"
-  | "commercial_opportunity"
-  | "action_required";
+export type SnapshotItemTag = string;
 
 export type ChannelSnapshotItem = {
   title: string;
