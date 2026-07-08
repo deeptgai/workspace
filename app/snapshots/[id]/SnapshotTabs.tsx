@@ -493,17 +493,17 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
 	              )}
 
               <div className="mt-3 flex flex-wrap gap-2">
-                {sourceItemUrl ? (
-                  <a
-                    className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-emerald-800 bg-emerald-800 px-3 py-2 text-sm font-black text-white transition hover:-translate-y-0.5 hover:bg-emerald-950"
-                    href={sourceItemUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Открыть в Telegram
-                    <ExternalLink size={15} />
-                  </a>
-                ) : null}
+	                {sourceItemUrl ? (
+	                  <a
+	                    className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-black text-sky-700 shadow-sm transition hover:-translate-y-0.5 hover:border-sky-300 hover:bg-sky-100 hover:text-sky-900"
+	                    href={sourceItemUrl}
+	                    target="_blank"
+	                    rel="noreferrer"
+	                  >
+	                    <ExternalLink size={15} />
+	                    Открыть в Telegram
+	                  </a>
+	                ) : null}
 	              </div>
             </div>
           </aside>
