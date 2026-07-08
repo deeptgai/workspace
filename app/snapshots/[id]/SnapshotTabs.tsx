@@ -1,7 +1,20 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ExternalLink, X } from "lucide-react";
+import {
+  BookOpen,
+  ExternalLink,
+  Lightbulb,
+  MapPin,
+  MessageCircleQuestion,
+  Network,
+  Sparkles,
+  Target,
+  Users,
+  Wrench,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import type {
   ChannelSnapshotDocument,
   SnapshotEvidenceRef,
@@ -69,6 +82,18 @@ const signalTabs: Array<{ id: SnapshotSignalKind | "all"; label: string }> = [
   { id: "place", label: "Места" },
   { id: "person", label: "Люди" },
 ];
+
+const signalTabIcons: Record<SnapshotSignalKind | "all", LucideIcon> = {
+  all: Network,
+  idea: Lightbulb,
+  pain: Target,
+  hypothesis: MessageCircleQuestion,
+  insight: Sparkles,
+  material: BookOpen,
+  tool: Wrench,
+  place: MapPin,
+  person: Users,
+};
 
 const kindLabels: Record<SnapshotSignalKind, string> = {
   idea: "идея",
@@ -270,6 +295,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
           <nav className="mt-3 grid grid-cols-2 gap-1.5 lg:grid-cols-1" aria-label="Разделы сигналов">
             {signalTabs.map((tab) => {
               const count = tab.id === "all" ? signals.length : signals.filter((signal) => signal.kind === tab.id).length;
+              const Icon = signalTabIcons[tab.id];
               return (
                 <button
                   className={`group flex min-h-10 cursor-pointer items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-black transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800 ${
@@ -279,7 +305,10 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
                   type="button"
                   onClick={() => selectTab(tab.id)}
                 >
-                  <span>{tab.label}</span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <Icon className="h-4 w-4 flex-none" strokeWidth={2.4} />
+                    <span className="truncate">{tab.label}</span>
+                  </span>
                   <span className="rounded-full bg-white px-2 py-0.5 text-xs font-black text-slate-500 shadow-sm">{count}</span>
                 </button>
               );
