@@ -333,10 +333,8 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
           <section className="motion-safe:animate-[snapshotFadeIn_420ms_ease-out]">
             {filteredSignals.length ? (
               <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
-                {filteredSignals.map((signal, index) => {
-                  const evidenceItems = uniqueEvidence(signal.evidence);
-                  const firstEvidence = evidenceItems[0];
-                  const person = findSignalPerson(signal, people);
+	                {filteredSignals.map((signal, index) => {
+	                  const person = findSignalPerson(signal, people);
 
                   return (
 	                    <article
@@ -353,22 +351,10 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
 	                      }}
 	                      style={{ animationDelay: `${Math.min(index * 28, 240)}ms` }}
 	                    >
-                      <div>
-                        <div className="flex items-start justify-between gap-2">
-                          <span className={signalKindClass(signal.kind)}>{kindLabels[signal.kind]}</span>
-                          {firstEvidence ? (
-	                            <button
-	                              className="min-h-7 rounded-full border border-slate-200 bg-white px-2 py-1 text-xs font-black text-emerald-800 transition duration-200 hover:border-emerald-200 hover:bg-emerald-50"
-	                              type="button"
-	                              onClick={(event) => {
-	                                event.stopPropagation();
-	                                openSignal(signal, firstEvidence);
-	                              }}
-	                            >
-                              {evidenceItems.length > 1 ? `${evidenceItems.length} поста` : `пост #${firstEvidence.itemId}`}
-                            </button>
-                          ) : null}
-                        </div>
+	                      <div>
+	                        <div className="flex items-start">
+	                          <span className={signalKindClass(signal.kind)}>{kindLabels[signal.kind]}</span>
+	                        </div>
 
                         {signal.kind === "person" ? (
                           <div className="mt-3 flex items-center gap-2">
