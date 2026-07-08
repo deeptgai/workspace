@@ -304,7 +304,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Telegram-канал @{actorname}
+                  @{actorname}
                 </a>
               ) : null}
               <h1 className="max-w-3xl text-3xl font-black leading-none text-white md:text-5xl">{snapshot.chatTitle}</h1>
