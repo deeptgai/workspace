@@ -4,7 +4,7 @@ import type { AiConfig } from "../ai/config.js";
 import { loadEmbeddingsConfig } from "../embeddings/config.js";
 import { searchMessages, type SearchMessageResult } from "../rag/searchMessages.js";
 import { canGenerateSignalPreview } from "../images/falSignalPreview.js";
-import { enqueueSignalPreviewImageJob } from "../queue/enqueue.js";
+import { enqueueSignalPreviewImageJob, enqueueSnapshotCoverImageJob } from "../queue/enqueue.js";
 import {
   CHANNEL_SNAPSHOT_SCHEMA_VERSION,
   type ChannelSnapshotDocument,
@@ -1682,6 +1682,24 @@ async function completeSnapshotIfReady(
   logAgent(options ?? {}, "tool:completeSnapshotIfReady:complete", {
     snapshotId,
   });
+  if (!snapshotDocument.coverImage?.url) {
+    try {
+      const coverJob = await enqueueSnapshotCoverImageJob({
+        snapshotId,
+      });
+
+      logAgent(options ?? {}, "tool:snapshotCoverImage:enqueued", {
+        snapshotId,
+        jobId: coverJob.id,
+      });
+    } catch (error) {
+      logAgent(options ?? {}, "tool:snapshotCoverImage:enqueueFailed", {
+        snapshotId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   const previewSignals = signals.filter((signal) => canGenerateSignalPreview(signal) && !signal.previewImage?.url);
 
   try {

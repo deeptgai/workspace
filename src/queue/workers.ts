@@ -8,12 +8,13 @@ import { importChannelComments } from "../import/importComments.js";
 import { importMessageBatch, type ImportBatchPhase } from "../import/importMessages.js";
 import { embedMessages } from "../rag/embedMessages.js";
 import { generateCommunitySnapshot, generateCommunitySnapshotSection } from "../snapshots/communitySnapshot.js";
+import { generateAndStoreSnapshotCoverImage } from "../images/snapshotCoverImages.js";
 import { generateAndStoreSignalPreviewImage } from "../images/signalPreviewImages.js";
 import { connectTelegramClient } from "../telegram/client.js";
 import { resolveDialogEntity } from "../telegram/dialogs.js";
 import { createRedisConnectionOptions } from "./connection.js";
-import { SOURCE_SNAPSHOT_QUEUE, SOURCE_SNAPSHOT_SECTION_QUEUE, COMMENT_IMPORT_QUEUE, MESSAGE_EMBEDDING_QUEUE, TELEGRAM_IMPORT_QUEUE, SIGNAL_PREVIEW_IMAGE_QUEUE } from "./names.js";
-import type { SourceSnapshotJobData, SourceSnapshotSectionJobData, CommentImportJobData, ContentEmbeddingJobData, TelegramImportJobData, SignalPreviewImageJobData } from "./types.js";
+import { SOURCE_SNAPSHOT_QUEUE, SOURCE_SNAPSHOT_SECTION_QUEUE, COMMENT_IMPORT_QUEUE, MESSAGE_EMBEDDING_QUEUE, TELEGRAM_IMPORT_QUEUE, SIGNAL_PREVIEW_IMAGE_QUEUE, SNAPSHOT_COVER_IMAGE_QUEUE } from "./names.js";
+import type { SourceSnapshotJobData, SourceSnapshotSectionJobData, CommentImportJobData, ContentEmbeddingJobData, TelegramImportJobData, SignalPreviewImageJobData, SnapshotCoverImageJobData } from "./types.js";
 
 function sectionJobId(snapshotId: string, sectionId: string) {
   return `snapshot-section--${snapshotId}--${sectionId}`.replace(/[^a-z0-9_-]+/giu, "-");
@@ -77,12 +78,14 @@ function parseSinceDate(value: string | undefined) {
 
 export function startWorkers() {
   const snapshotSectionConcurrency = envInt("SNAPSHOT_SECTION_WORKER_CONCURRENCY", 4);
+  const snapshotCoverImageConcurrency = envInt("SNAPSHOT_COVER_IMAGE_WORKER_CONCURRENCY", 2);
   const signalPreviewImageConcurrency = envInt("SIGNAL_PREVIEW_IMAGE_WORKER_CONCURRENCY", 10);
   const importConnection = createRedisConnectionOptions();
   const commentImportConnection = createRedisConnectionOptions();
   const embeddingConnection = createRedisConnectionOptions();
   const snapshotConnection = createRedisConnectionOptions();
   const snapshotSectionConnection = createRedisConnectionOptions();
+  const snapshotCoverImageConnection = createRedisConnectionOptions();
   const signalPreviewImageConnection = createRedisConnectionOptions();
   const contentEmbeddingQueue = new Queue<ContentEmbeddingJobData, unknown, string>(MESSAGE_EMBEDDING_QUEUE, {
     connection: createRedisConnectionOptions(),
@@ -109,6 +112,18 @@ export function startWorkers() {
     },
   });
   const snapshotSectionQueue = new Queue<SourceSnapshotSectionJobData, unknown, string>(SOURCE_SNAPSHOT_SECTION_QUEUE, {
+    connection: createRedisConnectionOptions(),
+    defaultJobOptions: {
+      attempts: 2,
+      backoff: {
+        type: "exponential",
+        delay: 10000,
+      },
+      removeOnComplete: 100,
+      removeOnFail: 100,
+    },
+  });
+  const snapshotCoverImageQueue = new Queue<SnapshotCoverImageJobData, unknown, string>(SNAPSHOT_COVER_IMAGE_QUEUE, {
     connection: createRedisConnectionOptions(),
     defaultJobOptions: {
       attempts: 2,
@@ -419,6 +434,26 @@ export function startWorkers() {
     },
   );
 
+  const snapshotCoverImageWorker = new Worker<SnapshotCoverImageJobData>(
+    SNAPSHOT_COVER_IMAGE_QUEUE,
+    async (job) => {
+      console.log(`[${SNAPSHOT_COVER_IMAGE_QUEUE}] job ${job.id} started`, job.data);
+
+      const result = await generateAndStoreSnapshotCoverImage(prisma, job.data.snapshotId);
+
+      console.log(`[${SNAPSHOT_COVER_IMAGE_QUEUE}] job ${job.id} complete`, {
+        snapshotId: job.data.snapshotId,
+        status: result.status,
+        reason: result.status === "skipped" ? result.reason : undefined,
+      });
+      return result;
+    },
+    {
+      connection: snapshotCoverImageConnection,
+      concurrency: snapshotCoverImageConcurrency,
+    },
+  );
+
   const signalPreviewImageWorker = new Worker<SignalPreviewImageJobData>(
     SIGNAL_PREVIEW_IMAGE_QUEUE,
     async (job) => {
@@ -446,10 +481,11 @@ export function startWorkers() {
     [MESSAGE_EMBEDDING_QUEUE]: 1,
     [SOURCE_SNAPSHOT_QUEUE]: 1,
     [SOURCE_SNAPSHOT_SECTION_QUEUE]: snapshotSectionConcurrency,
+    [SNAPSHOT_COVER_IMAGE_QUEUE]: snapshotCoverImageConcurrency,
     [SIGNAL_PREVIEW_IMAGE_QUEUE]: signalPreviewImageConcurrency,
   });
 
-  for (const worker of [importWorker, commentImportWorker, embeddingWorker, snapshotWorker, snapshotSectionWorker, signalPreviewImageWorker]) {
+  for (const worker of [importWorker, commentImportWorker, embeddingWorker, snapshotWorker, snapshotSectionWorker, snapshotCoverImageWorker, signalPreviewImageWorker]) {
     worker.on("failed", (job, error) => {
       console.error(`[${worker.name}] job ${job?.id ?? "unknown"} failed:`, error);
     });
@@ -465,11 +501,13 @@ export function startWorkers() {
     embeddingWorker,
     snapshotWorker,
     snapshotSectionWorker,
+    snapshotCoverImageWorker,
     signalPreviewImageWorker,
     contentEmbeddingQueue,
     commentImportQueue,
     telegramImportQueue,
     snapshotSectionQueue,
+    snapshotCoverImageQueue,
     signalPreviewImageQueue,
   };
 }

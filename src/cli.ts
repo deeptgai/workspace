@@ -621,52 +621,31 @@ program
           : "No completed channel snapshots found.");
       }
 
-      const { generateSnapshotCoverImage } = await import("./images/falSnapshotCover.js");
-      const { putObject, stableObjectKey } = await import("./storage/objectStorage.js");
-      const coverImage = await generateSnapshotCoverImage(snapshot.document);
-      const falImageResponse = await fetch(coverImage.url);
-
-      if (!falImageResponse.ok) {
-        throw new Error(`Cannot download fal image ${coverImage.url}: ${falImageResponse.status} ${await falImageResponse.text()}`);
-      }
-
-      const contentType = falImageResponse.headers.get("content-type") || coverImage.contentType || "image/jpeg";
-      const extension = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
-      const imageBytes = new Uint8Array(await falImageResponse.arrayBuffer());
-      const objectKey = stableObjectKey([snapshot.id, "cover", coverImage.requestId ?? Date.now().toString()], extension, "snapshot-covers");
-      const storedObject = await putObject(objectKey, imageBytes, contentType);
-      const storedCoverImage = {
-        ...coverImage,
-        url: storedObject.url,
-        sourceUrl: coverImage.url,
-        storageProvider: "s3" as const,
-        bucket: storedObject.bucket,
-        objectKey: storedObject.key,
-        sizeBytes: storedObject.sizeBytes,
-        contentType: storedObject.contentType,
-      };
-
-      await prisma.sourceSnapshot.update({
-        where: {
-          id: snapshot.id,
-        },
-        data: {
-          document: {
-            ...snapshot.document,
-            coverImage: storedCoverImage,
-          } as Prisma.InputJsonValue,
-        },
+      const { generateAndStoreSnapshotCoverImage } = await import("./images/snapshotCoverImages.js");
+      const result = await generateAndStoreSnapshotCoverImage(prisma, snapshot.id, {
+        skipExisting: false,
       });
+
+      if (result.status === "skipped") {
+        console.log("");
+        console.log("Snapshot cover image skipped.");
+        console.table([{
+          snapshotId: snapshot.id,
+          title: result.title,
+          reason: result.reason,
+        }]);
+        return;
+      }
 
       console.log("");
       console.log("Snapshot cover image generated.");
       console.table([{
         snapshotId: snapshot.id,
-        title: snapshot.title,
-        model: storedCoverImage.model,
-        bucket: storedCoverImage.bucket,
-        objectKey: storedCoverImage.objectKey,
-        url: storedCoverImage.url,
+        title: result.title,
+        model: result.coverImage.model,
+        bucket: result.coverImage.bucket,
+        objectKey: result.coverImage.objectKey,
+        url: result.coverImage.url,
       }]);
     } finally {
       await prisma.$disconnect();

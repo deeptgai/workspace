@@ -41,6 +41,10 @@ export type SourceSnapshotSectionJobData = {
   sectionId: string;
 };
 
+export type SnapshotCoverImageJobData = {
+  snapshotId: string;
+};
+
 export type SignalPreviewImageJobData = {
   snapshotId: string;
   signalId: string;

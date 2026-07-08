@@ -1,7 +1,7 @@
 import { Queue } from "bullmq";
-import { SOURCE_SNAPSHOT_QUEUE, SOURCE_SNAPSHOT_SECTION_QUEUE, COMMENT_IMPORT_QUEUE, MESSAGE_EMBEDDING_QUEUE, TELEGRAM_IMPORT_QUEUE, SIGNAL_PREVIEW_IMAGE_QUEUE } from "./names.js";
+import { SOURCE_SNAPSHOT_QUEUE, SOURCE_SNAPSHOT_SECTION_QUEUE, COMMENT_IMPORT_QUEUE, MESSAGE_EMBEDDING_QUEUE, TELEGRAM_IMPORT_QUEUE, SIGNAL_PREVIEW_IMAGE_QUEUE, SNAPSHOT_COVER_IMAGE_QUEUE } from "./names.js";
 import { createRedisConnectionOptions } from "./connection.js";
-import type { SourceSnapshotJobData, SourceSnapshotSectionJobData, CommentImportJobData, ContentEmbeddingJobData, TelegramImportJobData, SignalPreviewImageJobData } from "./types.js";
+import type { SourceSnapshotJobData, SourceSnapshotSectionJobData, CommentImportJobData, ContentEmbeddingJobData, TelegramImportJobData, SignalPreviewImageJobData, SnapshotCoverImageJobData } from "./types.js";
 
 export function createQueues() {
   const connection = createRedisConnectionOptions();
@@ -52,6 +52,18 @@ export function createQueues() {
       },
     }),
     sourceSnapshotSectionQueue: new Queue<SourceSnapshotSectionJobData, unknown, string>(SOURCE_SNAPSHOT_SECTION_QUEUE, {
+      connection,
+      defaultJobOptions: {
+        attempts: 2,
+        backoff: {
+          type: "exponential",
+          delay: 10000,
+        },
+        removeOnComplete: 100,
+        removeOnFail: 100,
+      },
+    }),
+    snapshotCoverImageQueue: new Queue<SnapshotCoverImageJobData, unknown, string>(SNAPSHOT_COVER_IMAGE_QUEUE, {
       connection,
       defaultJobOptions: {
         attempts: 2,

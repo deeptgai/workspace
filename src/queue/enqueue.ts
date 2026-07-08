@@ -1,6 +1,6 @@
 import { createQueues } from "./queues.js";
 import { enqueueSourceSnapshotJob as enqueueSharedSourceSnapshotJob } from "./snapshotQueue.js";
-import type { SourceSnapshotJobData, SourceSnapshotSectionJobData, CommentImportJobData, ContentEmbeddingJobData, TelegramImportJobData, SignalPreviewImageJobData } from "./types.js";
+import type { SourceSnapshotJobData, SourceSnapshotSectionJobData, CommentImportJobData, ContentEmbeddingJobData, TelegramImportJobData, SignalPreviewImageJobData, SnapshotCoverImageJobData } from "./types.js";
 
 function slug(value: string): string {
   return value.trim().replace(/^@/, "").toLowerCase().replace(/[^a-z0-9а-яё_-]+/giu, "-");
@@ -17,6 +17,7 @@ async function closeQueues(queues: ReturnType<typeof createQueues>) {
     queues.contentEmbeddingQueue.close(),
     queues.sourceSnapshotQueue.close(),
     queues.sourceSnapshotSectionQueue.close(),
+    queues.snapshotCoverImageQueue.close(),
     queues.signalPreviewImageQueue.close(),
   ]);
 }
@@ -67,6 +68,18 @@ export async function enqueueSourceSnapshotSectionJob(data: SourceSnapshotSectio
   try {
     return await queues.sourceSnapshotSectionQueue.add("section", data, {
       jobId: uniqueJobId(`snapshot-section-${data.sectionId}`, data.snapshotId),
+    });
+  } finally {
+    await closeQueues(queues);
+  }
+}
+
+export async function enqueueSnapshotCoverImageJob(data: SnapshotCoverImageJobData) {
+  const queues = createQueues();
+
+  try {
+    return await queues.snapshotCoverImageQueue.add("generate", data, {
+      jobId: uniqueJobId("snapshot-cover-image", data.snapshotId),
     });
   } finally {
     await closeQueues(queues);
