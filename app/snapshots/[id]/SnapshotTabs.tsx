@@ -309,18 +309,6 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
           ) : null}
 
           <section className="motion-safe:animate-[snapshotFadeIn_420ms_ease-out]">
-            {selectedTag ? (
-              <div className="mb-2 flex justify-end">
-                <button
-                  className="min-h-10 cursor-pointer rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-black text-emerald-800 transition duration-200 hover:-translate-y-0.5 hover:bg-emerald-50"
-                  type="button"
-                  onClick={() => setSelectedTag("")}
-                >
-                  Сбросить фильтр
-                </button>
-              </div>
-            ) : null}
-
             {filteredSignals.length ? (
               <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
                 {filteredSignals.map((signal, index) => {
