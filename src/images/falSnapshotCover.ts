@@ -68,8 +68,14 @@ function topSignals(snapshot: ChannelSnapshotDocument) {
     .join("\n");
 }
 
+function usableHeroPrompt(value: string) {
+  const literalNatureWords = /\b(baobab|baobabs|tree|trees|forest|savanna|jungle|bird|birds|wildlife|animal|animals|frozen landscape|winter sky)\b/i;
+
+  return literalNatureWords.test(value) ? "" : value;
+}
+
 export function buildSnapshotCoverPrompt(snapshot: ChannelSnapshotDocument) {
-  const heroPrompt = stripMarkdown(snapshot.heroTheme?.imagePrompt);
+  const heroPrompt = usableHeroPrompt(stripMarkdown(snapshot.heroTheme?.imagePrompt));
   const theme = snapshot.heroTheme
     ? `Theme: ${snapshot.heroTheme.concept}. Mood: ${snapshot.heroTheme.mood}. Palette family: ${snapshot.heroTheme.palette}. Motif: ${snapshot.heroTheme.motif}.`
     : "";
@@ -84,6 +90,9 @@ export function buildSnapshotCoverPrompt(snapshot: ChannelSnapshotDocument) {
     "Use a concrete visual metaphor built from unmarked objects, space, light, material texture, and composition.",
     "It should feel specific to this channel snapshot, analytical, useful, modern, and sellable.",
     "Leave calm negative space on the left side for white overlaid title text.",
+    "Do not illustrate the channel title literally. If the title contains metaphorical nature words, translate them into abstract growth, strategy, systems, or portfolio composition.",
+    "Avoid birds, wildlife, literal animals, literal trees, forests, savanna, and decorative nature scenes unless the channel itself is actually about nature.",
+    "Prefer business, IT, consulting, product, CRM, content, productivity, and strategic-growth visual metaphors when those topics appear in the signals.",
     `Channel title: ${stripMarkdown(snapshot.chatTitle)}.`,
     `Snapshot title: ${stripMarkdown(snapshot.title)}.`,
     theme,
