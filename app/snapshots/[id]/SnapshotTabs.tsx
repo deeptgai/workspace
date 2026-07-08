@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
   BookOpen,
   ExternalLink,
@@ -359,7 +359,6 @@ function heroBackground(snapshot: ChannelSnapshotDocument) {
 }
 
 export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, initialActiveSignalId, basePath }: SnapshotTabsProps) {
-  const router = useRouter();
   const pathname = usePathname();
   const snapshotPath = basePath ?? pathname;
   const signals = snapshot.signals;
@@ -403,10 +402,38 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
     const byTag = !selectedTag || visibleSignalTags(signal).includes(selectedTag);
     return byTag;
   });
+  const signalHref = (signalId: string) => `${snapshotPath}/${encodeURIComponent(signalId)}`;
+  const signalIdFromPath = (path: string) => {
+    const signalPathPrefix = `${snapshotPath}/`;
+
+    if (!path.startsWith(signalPathPrefix)) {
+      return null;
+    }
+
+    const encodedSignalId = path.slice(signalPathPrefix.length).split("/")[0];
+
+    try {
+      const decodedSignalId = decodeURIComponent(encodedSignalId);
+
+      return signals.some((signal) => signal.id === decodedSignalId) ? decodedSignalId : null;
+    } catch {
+      return signals.some((signal) => signal.id === encodedSignalId) ? encodedSignalId : null;
+    }
+  };
   useEffect(() => {
     setActiveSignalId(routeActiveSignalId);
     setActiveEvidenceItemId(null);
   }, [routeActiveSignalId]);
+  useEffect(() => {
+    const syncSignalFromLocation = () => {
+      setActiveSignalId(signalIdFromPath(window.location.pathname));
+      setActiveEvidenceItemId(null);
+    };
+
+    window.addEventListener("popstate", syncSignalFromLocation);
+
+    return () => window.removeEventListener("popstate", syncSignalFromLocation);
+  }, [signals, snapshotPath]);
   const selectTab = (tab: SnapshotSignalKind | "all") => {
     setActiveTab(tab);
     setSelectedTag("");
@@ -414,14 +441,13 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
   const openSignal = (signal: SnapshotSignal, evidence?: SnapshotEvidenceRef) => {
     setActiveSignalId(signal.id);
     setActiveEvidenceItemId(evidence?.itemId ?? uniqueEvidence(signal.evidence)[0]?.itemId ?? null);
-    router.push(signalHref(signal.id), { scroll: false });
+    window.history.pushState({ signalId: signal.id }, "", signalHref(signal.id));
   };
   const closeSignal = () => {
     setActiveSignalId(null);
     setActiveEvidenceItemId(null);
-    router.push(snapshotPath, { scroll: false });
+    window.history.replaceState({}, "", snapshotPath);
   };
-  const signalHref = (signalId: string) => `${snapshotPath}/${encodeURIComponent(signalId)}`;
   const compactHero = activeTab !== "all";
   const heroSectionClass = compactHero
     ? "relative min-h-[96px] overflow-hidden rounded-lg border border-slate-200 bg-cover bg-center shadow-sm motion-safe:animate-[snapshotFadeIn_360ms_ease-out] md:min-h-[112px]"
