@@ -1,18 +1,26 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { isChannelSnapshotDocument } from "../../../src/snapshots/sourceSnapshotSchema";
-import { AppShell } from "../../components";
-import { formatDateTime, getSnapshot } from "../../data";
-import { getSnapshotEvidenceMessages, getSnapshotPeople } from "../snapshotViewData";
-import { SnapshotSeoContent } from "../SnapshotSeoContent";
-import { SnapshotTabs } from "./SnapshotTabs";
+import { isChannelSnapshotDocument } from "../../../../src/snapshots/sourceSnapshotSchema";
+import { AppShell } from "../../../components";
+import { formatDateTime, getSnapshot } from "../../../data";
+import { getSnapshotEvidenceMessages, getSnapshotPeople } from "../../snapshotViewData";
+import { SnapshotSeoContent } from "../../SnapshotSeoContent";
+import { SnapshotTabs } from "../SnapshotTabs";
 
 export const dynamic = "force-dynamic";
 
-type SnapshotPageProps = {
-  params: Promise<{ id: string }>;
+type SnapshotSignalPageProps = {
+  params: Promise<{ id: string; signalId: string }>;
 };
+
+function normalizeSignalId(signalId: string) {
+  try {
+    return decodeURIComponent(signalId);
+  } catch {
+    return signalId;
+  }
+}
 
 function snapshotSlug(title: string) {
   return title
@@ -23,17 +31,24 @@ function snapshotSlug(title: string) {
     .slice(0, 80) || "snapshot";
 }
 
-export async function generateMetadata({ params }: SnapshotPageProps): Promise<Metadata> {
-  const { id } = await params;
+export async function generateMetadata({ params }: SnapshotSignalPageProps): Promise<Metadata> {
+  const { id, signalId } = await params;
+  const normalizedSignalId = normalizeSignalId(signalId);
   const snapshot = await getSnapshot(id);
+  const document = isChannelSnapshotDocument(snapshot?.document) ? snapshot.document : null;
+  const activeSignal = document?.signals.find((signal) => signal.id === normalizedSignalId);
 
   return {
-    title: snapshot ? `${snapshot.chat.title} — карта сигналов` : "Снимок",
+    title: activeSignal
+      ? `${activeSignal.title} — ${snapshot?.chat.title}`
+      : snapshot ? `${snapshot.chat.title} — карта сигналов` : "Снимок",
+    description: activeSignal?.summary,
   };
 }
 
-export default async function SnapshotPage({ params }: SnapshotPageProps) {
-  const { id } = await params;
+export default async function SnapshotSignalPage({ params }: SnapshotSignalPageProps) {
+  const { id, signalId } = await params;
+  const normalizedSignalId = normalizeSignalId(signalId);
   const snapshot = await getSnapshot(id);
 
   if (!snapshot) {
@@ -41,6 +56,10 @@ export default async function SnapshotPage({ params }: SnapshotPageProps) {
   }
 
   if (!isChannelSnapshotDocument(snapshot.document)) {
+    notFound();
+  }
+
+  if (!snapshot.document.signals.some((signal) => signal.id === normalizedSignalId)) {
     notFound();
   }
 
@@ -66,6 +85,7 @@ export default async function SnapshotPage({ params }: SnapshotPageProps) {
         evidenceMessages={evidenceMessages}
         people={getSnapshotPeople(snapshot)}
         actorname={snapshot.chat.username}
+        initialActiveSignalId={normalizedSignalId}
         basePath={`/snapshots/${id}`}
       />
       <SnapshotSeoContent snapshot={snapshot.document} evidenceMessages={evidenceMessages} />

@@ -47,11 +47,11 @@ export function publicObjectUrl(config: ObjectStorageConfig, bucket: string, key
   return `${config.publicBasePath}/${encodeObjectPath(bucket, key)}`;
 }
 
-export function stableObjectKey(parts: string[], extension: string) {
+export function stableObjectKey(parts: string[], extension: string, prefix = "signal-previews") {
   const hash = createHash("sha256").update(parts.join("\n")).digest("hex").slice(0, 20);
   const cleanExtension = extension.replace(/^\.+/, "") || "bin";
 
-  return `signal-previews/${parts[0]}/${hash}.${cleanExtension}`;
+  return `${prefix}/${parts[0]}/${hash}.${cleanExtension}`;
 }
 
 export async function createBucketIfMissing(config = objectStorageConfig()) {

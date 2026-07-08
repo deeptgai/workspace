@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import {
   BookOpen,
   ExternalLink,
@@ -44,6 +45,8 @@ type SnapshotTabsProps = {
   evidenceMessages: EvidenceMessage[];
   people: SnapshotPerson[];
   actorname?: string | null;
+  initialActiveSignalId?: string | null;
+  basePath?: string;
 };
 
 type SnapshotPerson = {
@@ -150,6 +153,38 @@ function formatDateTime(value: string) {
   }).format(new Date(value));
 }
 
+function formatSignalPeriod(value: string) {
+  const parts = new Intl.DateTimeFormat("ru-RU", {
+    month: "long",
+    year: "numeric",
+  }).formatToParts(new Date(value));
+  const month = parts.find((part) => part.type === "month")?.value ?? "";
+  const year = parts.find((part) => part.type === "year")?.value ?? "";
+  const label = [month.charAt(0).toUpperCase() + month.slice(1), year].filter(Boolean).join(" ");
+
+  return label;
+}
+
+function signalTimelineBadges(signal: SnapshotSignal) {
+  const timeline = signal.timeline;
+
+  if (!timeline) {
+    return [];
+  }
+
+  const labels = [
+    timeline.firstPostAt ? formatSignalPeriod(timeline.firstPostAt) : null,
+    timeline.firstCommentAt ? formatSignalPeriod(timeline.firstCommentAt) : null,
+    timeline.firstEvidenceAt ? formatSignalPeriod(timeline.firstEvidenceAt) : null,
+  ].filter((item): item is string => Boolean(item));
+
+  return [...new Set(labels)].slice(0, 2);
+}
+
+function shouldShowPreviewImage(signal: SnapshotSignal) {
+  return signal.kind !== "person" && Boolean(signal.previewImage?.url);
+}
+
 function cleanSnapshotText(value: string | undefined) {
   if (!value) {
     return "";
@@ -254,6 +289,10 @@ function stableIndex(value: string, modulo: number) {
 }
 
 function heroBackground(snapshot: ChannelSnapshotDocument) {
+  if (snapshot.coverImage?.url) {
+    return `linear-gradient(105deg, rgba(16,24,32,.92), rgba(16,24,32,.58) 58%, rgba(16,24,32,.16)), url("${snapshot.coverImage.url}")`;
+  }
+
   const paletteKeys = Object.keys(heroPalettes) as Array<keyof typeof heroPalettes>;
   const fallbackPalette = paletteKeys[stableIndex(`${snapshot.sourceId}:${snapshot.chatTitle}`, paletteKeys.length)];
   const paletteName = snapshot.heroTheme?.palette && snapshot.heroTheme.palette in heroPalettes
@@ -319,16 +358,24 @@ function heroBackground(snapshot: ChannelSnapshotDocument) {
   return `linear-gradient(105deg, rgba(16,24,32,.92), rgba(16,24,32,.56) 60%, rgba(16,24,32,.12)), url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 }
 
-export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: SnapshotTabsProps) {
+export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, initialActiveSignalId, basePath }: SnapshotTabsProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const snapshotPath = basePath ?? pathname;
+  const signals = snapshot.signals;
   const [activeTab, setActiveTab] = useState<SnapshotSignalKind | "all">("all");
   const [selectedTag, setSelectedTag] = useState("");
-  const [activeSignalId, setActiveSignalId] = useState<string | null>(null);
+  const [activeSignalId, setActiveSignalId] = useState<string | null>(() =>
+    initialActiveSignalId && signals.some((signal) => signal.id === initialActiveSignalId) ? initialActiveSignalId : null,
+  );
   const [activeEvidenceItemId, setActiveEvidenceItemId] = useState<string | null>(null);
+  const routeActiveSignalId = initialActiveSignalId && signals.some((signal) => signal.id === initialActiveSignalId)
+    ? initialActiveSignalId
+    : null;
   const evidenceById = useMemo(
     () => new Map(evidenceMessages.map((message) => [message.externalId, message])),
     [evidenceMessages],
   );
-  const signals = snapshot.signals;
   const activeSignal = activeSignalId ? signals.find((signal) => signal.id === activeSignalId) ?? null : null;
   const activeSignalEvidence = useMemo(() => uniqueEvidence(activeSignal?.evidence), [activeSignal]);
   const activeEvidence = activeSignalEvidence.find((evidence) => evidence.itemId === activeEvidenceItemId) ?? activeSignalEvidence[0] ?? null;
@@ -356,6 +403,10 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
     const byTag = !selectedTag || visibleSignalTags(signal).includes(selectedTag);
     return byTag;
   });
+  useEffect(() => {
+    setActiveSignalId(routeActiveSignalId);
+    setActiveEvidenceItemId(null);
+  }, [routeActiveSignalId]);
   const selectTab = (tab: SnapshotSignalKind | "all") => {
     setActiveTab(tab);
     setSelectedTag("");
@@ -363,11 +414,27 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
   const openSignal = (signal: SnapshotSignal, evidence?: SnapshotEvidenceRef) => {
     setActiveSignalId(signal.id);
     setActiveEvidenceItemId(evidence?.itemId ?? uniqueEvidence(signal.evidence)[0]?.itemId ?? null);
+    router.push(signalHref(signal.id), { scroll: false });
   };
   const closeSignal = () => {
     setActiveSignalId(null);
     setActiveEvidenceItemId(null);
+    router.push(snapshotPath, { scroll: false });
   };
+  const signalHref = (signalId: string) => `${snapshotPath}/${encodeURIComponent(signalId)}`;
+  const compactHero = activeTab !== "all";
+  const heroSectionClass = compactHero
+    ? "relative min-h-[96px] overflow-hidden rounded-lg border border-slate-200 bg-cover bg-center shadow-sm motion-safe:animate-[snapshotFadeIn_360ms_ease-out] md:min-h-[112px]"
+    : "relative min-h-[170px] overflow-hidden rounded-lg border border-slate-200 bg-cover bg-center shadow-sm motion-safe:animate-[snapshotFadeIn_360ms_ease-out] md:min-h-[188px]";
+  const heroContentClass = compactHero
+    ? "relative flex min-h-[96px] flex-col justify-end p-3 md:min-h-[112px] md:p-4"
+    : "relative flex min-h-[170px] flex-col justify-end p-4 md:min-h-[188px] md:p-5";
+  const heroTitleClass = compactHero
+    ? "max-w-3xl text-xl font-black leading-none text-white md:text-3xl"
+    : "max-w-3xl text-3xl font-black leading-none text-white md:text-5xl";
+  const heroLinkClass = compactHero
+    ? "mb-2 inline-flex w-fit min-h-7 items-center rounded-full border border-white/25 bg-white/10 px-2.5 py-1 text-[11px] font-black text-white backdrop-blur transition duration-200 hover:bg-white/20 hover:text-white"
+    : "mb-3 inline-flex w-fit min-h-8 items-center rounded-full border border-white/25 bg-white/10 px-3 py-1.5 text-xs font-black text-white backdrop-blur transition duration-200 hover:bg-white/20 hover:text-white";
 
   return (
     <>
@@ -405,16 +472,16 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
 
         <div className="min-w-0">
           <section
-            className="relative min-h-[170px] overflow-hidden rounded-lg border border-slate-200 bg-cover bg-center shadow-sm motion-safe:animate-[snapshotFadeIn_360ms_ease-out] md:min-h-[188px]"
+            className={heroSectionClass}
             style={{
               backgroundImage: heroBackground(snapshot),
             }}
           >
             <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent" />
-            <div className="relative flex min-h-[170px] flex-col justify-end p-4 md:min-h-[188px] md:p-5">
+            <div className={heroContentClass}>
               {actorname ? (
                 <a
-                  className="mb-3 inline-flex w-fit min-h-8 items-center rounded-full border border-white/25 bg-white/10 px-3 py-1.5 text-xs font-black text-white backdrop-blur transition duration-200 hover:bg-white/20 hover:text-white"
+                  className={heroLinkClass}
 	                  href={`https://t.me/${actorname}`}
 	                  target="_blank"
 	                  rel="noreferrer"
@@ -423,10 +490,12 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
                   @{actorname}
                 </a>
               ) : null}
-              <h1 className="max-w-3xl text-3xl font-black leading-none text-white md:text-5xl">{snapshot.chatTitle}</h1>
-              <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-white/85 md:text-base">
-                {heroSummary(snapshot, signals)}
-              </p>
+              <h1 className={heroTitleClass}>{snapshot.chatTitle}</h1>
+              {compactHero ? null : (
+                <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-white/85 md:text-base">
+                  {heroSummary(snapshot, signals)}
+                </p>
+              )}
             </div>
           </section>
 
@@ -457,7 +526,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
 
                   return (
 	                    <article
-	                      className="group flex min-h-[190px] cursor-pointer flex-col justify-between rounded-lg border border-slate-200 bg-white p-3 shadow-sm transition duration-200 hover:-translate-y-1 hover:border-emerald-200 hover:shadow-lg motion-safe:animate-[snapshotFadeIn_320ms_ease-out]"
+	                      className="group relative flex min-h-[190px] cursor-pointer flex-col justify-between rounded-lg border border-slate-200 bg-white p-3 shadow-sm transition duration-200 hover:-translate-y-1 hover:border-emerald-200 hover:shadow-lg motion-safe:animate-[snapshotFadeIn_320ms_ease-out]"
 	                      key={signal.id}
 	                      role="button"
 	                      tabIndex={0}
@@ -470,10 +539,15 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
 	                      }}
 	                      style={{ animationDelay: `${Math.min(index * 28, 240)}ms` }}
 	                    >
+                        <a className="sr-only" href={signalHref(signal.id)}>
+                          Открыть сигнал: {cleanSnapshotText(signal.title)}
+                        </a>
 	                      <div>
-	                        <div className="flex items-start">
-	                          <span className={signalKindClass(signal.kind)}>{kindLabels[signal.kind]}</span>
-	                        </div>
+	                        {activeTab === "all" ? (
+	                          <div className="flex items-start">
+	                            <span className={signalKindClass(signal.kind)}>{kindLabels[signal.kind]}</span>
+	                          </div>
+	                        ) : null}
 
                         {signal.kind === "person" ? (
                           <div className="mt-3 flex items-center gap-2">
@@ -500,16 +574,24 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
                           </h3>
                         )}
 
-                        {signal.previewImage?.url ? (
+                        {signalTimelineBadges(signal).length ? (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {signalTimelineBadges(signal).slice(0, 2).map((label) => (
+                              <span className="rounded-full bg-slate-50 px-2 py-1 text-[11px] font-black text-slate-500" key={label}>{label}</span>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {shouldShowPreviewImage(signal) ? (
                           <img
                             alt=""
                             className="mt-3 aspect-[4/3] w-full rounded-md object-cover"
                             loading="lazy"
-                            src={signal.previewImage.url}
+                            src={signal.previewImage?.url}
                           />
                         ) : null}
 
-                        <p className="m-0 mt-2 text-sm leading-6 text-slate-600">{cleanSnapshotText(signal.summary)}</p>
+                        <p className="m-0 mt-2 overflow-hidden text-sm leading-6 text-slate-600 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:3]">{cleanSnapshotText(signal.summary)}</p>
                       </div>
 
 	                      <div className="mt-2 flex flex-wrap gap-1">
@@ -552,14 +634,21 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
 	              <div className="min-w-0">
 	                <span className={signalKindClass(activeSignal.kind)}>{kindLabels[activeSignal.kind]}</span>
 	                <h2 className="m-0 mt-2 text-2xl font-black leading-tight text-slate-950">{cleanSnapshotText(activeSignal.title)}</h2>
-	                {activeSignal.previewImage?.url ? (
+	                {shouldShowPreviewImage(activeSignal) ? (
 	                  <img
 	                    alt=""
 	                    className="mt-3 aspect-[4/3] max-h-64 w-full max-w-xl rounded-lg object-cover"
-	                    src={activeSignal.previewImage.url}
+	                    src={activeSignal.previewImage?.url}
 	                  />
 	                ) : null}
 	                <p className="m-0 mt-2 max-w-3xl text-sm leading-6 text-slate-600">{cleanSnapshotText(activeSignal.summary)}</p>
+	                {signalTimelineBadges(activeSignal).length ? (
+	                  <div className="mt-3 flex flex-wrap gap-1.5">
+	                    {signalTimelineBadges(activeSignal).map((label) => (
+	                      <span className="rounded-full bg-white px-2 py-1 text-xs font-black text-slate-600 ring-1 ring-slate-200" key={label}>{label}</span>
+	                    ))}
+	                  </div>
+	                ) : null}
 	                {visibleSignalTags(activeSignal).length ? (
 	                  <div className="mt-3 flex flex-wrap gap-1.5">
 	                    {visibleSignalTags(activeSignal).map((tag) => (

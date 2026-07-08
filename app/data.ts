@@ -236,12 +236,14 @@ export async function getSnapshot(snapshotId: string) {
     },
     take: 500,
   });
-  const topPeople = await Promise.all(
-    topPeopleGroups.flatMap((group) => group.actorId ? [group] : []).map(async (group) => {
-      const [user, examples] = await Promise.all([
-        prisma.actor.findUnique({
+  const actorIds = topPeopleGroups.flatMap((group) => group.actorId ? [group.actorId] : []);
+  const [actors, exampleMessages] = await Promise.all([
+    actorIds.length
+      ? prisma.actor.findMany({
           where: {
-            id: group.actorId as string,
+            id: {
+              in: actorIds,
+            },
           },
           select: {
             id: true,
@@ -251,12 +253,16 @@ export async function getSnapshot(snapshotId: string) {
             lastName: true,
             photo: true,
           },
-        }),
-        prisma.contentItem.findMany({
+        })
+      : [],
+    actorIds.length
+      ? prisma.contentItem.findMany({
           where: {
             sourceId: snapshot.sourceId,
             kind: peopleMessageKind,
-            actorId: group.actorId,
+            actorId: {
+              in: actorIds,
+            },
             text: {
               not: null,
             },
@@ -264,8 +270,9 @@ export async function getSnapshot(snapshotId: string) {
           orderBy: {
             engagementScore: "desc",
           },
-          take: 2,
+          take: actorIds.length * 4,
           select: {
+            actorId: true,
             externalId: true,
             text: true,
             publishedAt: true,
@@ -277,20 +284,42 @@ export async function getSnapshot(snapshotId: string) {
               },
             },
           },
-        }),
-      ]);
+        })
+      : [],
+  ]);
+  const actorById = new Map(actors.map((actor) => [actor.id, actor]));
+  const examplesByActorId = new Map<string, typeof exampleMessages>();
 
-      return {
-        user,
-        comments: group._count._all,
-        reactions: group._sum.reactionsTotal ?? 0,
-        replies: group._sum.repliesCount ?? 0,
-        avgEngagement: group._avg.engagementScore ?? 0,
-        lastCommentAt: group._max.publishedAt,
-        examples,
-      };
-    }),
-  );
+  for (const message of exampleMessages) {
+    if (!message.actorId) {
+      continue;
+    }
+
+    const examples = examplesByActorId.get(message.actorId) ?? [];
+
+    if (examples.length >= 2) {
+      continue;
+    }
+
+    examples.push(message);
+    examplesByActorId.set(message.actorId, examples);
+  }
+
+  const topPeople = topPeopleGroups.flatMap((group) => {
+    if (!group.actorId) {
+      return [];
+    }
+
+    return [{
+      user: actorById.get(group.actorId) ?? null,
+      comments: group._count._all,
+      reactions: group._sum.reactionsTotal ?? 0,
+      replies: group._sum.repliesCount ?? 0,
+      avgEngagement: group._avg.engagementScore ?? 0,
+      lastCommentAt: group._max.publishedAt,
+      examples: examplesByActorId.get(group.actorId) ?? [],
+    }];
+  });
 
   return {
     ...snapshot,

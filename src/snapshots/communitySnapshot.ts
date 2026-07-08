@@ -17,6 +17,7 @@ import {
   type SnapshotItemTag,
   type SnapshotEvidenceRef,
 } from "./sourceSnapshotSchema.js";
+import { enrichSignalsWithTimeline } from "./signalTimeline.js";
 
 export type GenerateCommunitySnapshotOptions = {
   chat: Source;
@@ -1564,7 +1565,7 @@ async function completeSnapshotIfReady(
     const section = sections.find((candidate) => candidate.sectionId === sectionId);
     return section ? [sectionFromDbRow(section)] : [];
   });
-  const signals = buildSnapshotSignals(orderedSections);
+  const signals = await enrichSignalsWithTimeline(prisma, chat.id, buildSnapshotSignals(orderedSections));
   const heroTheme = await generateHeroTheme(aiConfig, context, orderedSections, signals, options);
   const title = `Снимок по каналу: ${chat.title}`;
   const snapshotDocument: ChannelSnapshotDocument = {

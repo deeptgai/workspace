@@ -594,6 +594,86 @@ program
   });
 
 program
+  .command("snapshot:image")
+  .description("Generate a fal.ai cover image for a completed snapshot and save it into the snapshot document")
+  .argument("[snapshotId]", "Stored snapshot id. Defaults to the latest completed snapshot.")
+  .action(async (snapshotId: string | undefined) => {
+    try {
+      const snapshot = await prisma.sourceSnapshot.findFirst({
+        where: {
+          id: snapshotId,
+          status: "completed",
+          document: {
+            not: Prisma.JsonNull,
+          },
+        },
+        include: {
+          source: true,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+
+      if (!snapshot || !isChannelSnapshotDocument(snapshot.document)) {
+        throw new Error(snapshotId
+          ? `Completed channel snapshot not found: ${snapshotId}`
+          : "No completed channel snapshots found.");
+      }
+
+      const { generateSnapshotCoverImage } = await import("./images/falSnapshotCover.js");
+      const { putObject, stableObjectKey } = await import("./storage/objectStorage.js");
+      const coverImage = await generateSnapshotCoverImage(snapshot.document);
+      const falImageResponse = await fetch(coverImage.url);
+
+      if (!falImageResponse.ok) {
+        throw new Error(`Cannot download fal image ${coverImage.url}: ${falImageResponse.status} ${await falImageResponse.text()}`);
+      }
+
+      const contentType = falImageResponse.headers.get("content-type") || coverImage.contentType || "image/jpeg";
+      const extension = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
+      const imageBytes = new Uint8Array(await falImageResponse.arrayBuffer());
+      const objectKey = stableObjectKey([snapshot.id, "cover", coverImage.requestId ?? Date.now().toString()], extension, "snapshot-covers");
+      const storedObject = await putObject(objectKey, imageBytes, contentType);
+      const storedCoverImage = {
+        ...coverImage,
+        url: storedObject.url,
+        sourceUrl: coverImage.url,
+        storageProvider: "s3" as const,
+        bucket: storedObject.bucket,
+        objectKey: storedObject.key,
+        sizeBytes: storedObject.sizeBytes,
+        contentType: storedObject.contentType,
+      };
+
+      await prisma.sourceSnapshot.update({
+        where: {
+          id: snapshot.id,
+        },
+        data: {
+          document: {
+            ...snapshot.document,
+            coverImage: storedCoverImage,
+          } as Prisma.InputJsonValue,
+        },
+      });
+
+      console.log("");
+      console.log("Snapshot cover image generated.");
+      console.table([{
+        snapshotId: snapshot.id,
+        title: snapshot.title,
+        model: storedCoverImage.model,
+        bucket: storedCoverImage.bucket,
+        objectKey: storedCoverImage.objectKey,
+        url: storedCoverImage.url,
+      }]);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+program
   .command("signal:image")
   .description("Generate a fal.ai preview image for one signal id and save it into the snapshot document")
   .argument("<signalId>", "Signal id from snapshot.document.signals[].id")
@@ -641,8 +721,22 @@ program
         throw new Error(`Signal not found in snapshot ${snapshot.id}: ${signalId}`);
       }
 
-      const { generateSignalPreviewImage } = await import("./images/falSignalPreview.js");
+      const { canGenerateSignalPreview, generateSignalPreviewImage } = await import("./images/falSignalPreview.js");
       const { putObject, stableObjectKey } = await import("./storage/objectStorage.js");
+
+      if (!canGenerateSignalPreview(signal)) {
+        console.log("");
+        console.log("Signal preview image skipped.");
+        console.table([{
+          snapshotId: snapshot.id,
+          signalId,
+          kind: signal.kind,
+          title: signal.title,
+          reason: "Preview image generation is disabled for this signal kind.",
+        }]);
+        return;
+      }
+
       const previewImage = await generateSignalPreviewImage(signal, {
         chatTitle: snapshot.source.title,
       });
@@ -718,6 +812,131 @@ program
       bucket,
       publicBasePath: config.publicBasePath,
     }]);
+  });
+
+program
+  .command("snapshot:timeline")
+  .description("Backfill signal timeline fields for completed snapshot documents")
+  .option("-s, --snapshot <snapshotId>", "Restrict backfill to one snapshot id")
+  .action(async (options: { snapshot?: string }) => {
+    try {
+      const snapshots = await prisma.sourceSnapshot.findMany({
+        where: {
+          id: options.snapshot,
+          status: "completed",
+          document: {
+            not: Prisma.JsonNull,
+          },
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+      const { enrichSignalsWithTimeline } = await import("./snapshots/signalTimeline.js");
+      let updated = 0;
+      let skipped = 0;
+
+      for (const snapshot of snapshots) {
+        if (!isChannelSnapshotDocument(snapshot.document)) {
+          skipped += 1;
+          continue;
+        }
+
+        const signals = await enrichSignalsWithTimeline(prisma, snapshot.sourceId, snapshot.document.signals);
+
+        await prisma.sourceSnapshot.update({
+          where: {
+            id: snapshot.id,
+          },
+          data: {
+            document: {
+              ...snapshot.document,
+              signals,
+            } satisfies Prisma.InputJsonValue,
+          },
+        });
+        updated += 1;
+      }
+
+      console.log("");
+      console.log("Snapshot timelines backfilled.");
+      console.table([{
+        updated,
+        skipped,
+        scope: options.snapshot ?? "completed snapshots",
+      }]);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+program
+  .command("signal:image:prune")
+  .description("Remove generated preview metadata from signal kinds that should not have images")
+  .option("-s, --snapshot <snapshotId>", "Restrict pruning to one snapshot id")
+  .action(async (options: { snapshot?: string }) => {
+    try {
+      const { canGenerateSignalPreview } = await import("./images/falSignalPreview.js");
+      const snapshots = await prisma.sourceSnapshot.findMany({
+        where: {
+          id: options.snapshot,
+          status: "completed",
+          document: {
+            not: Prisma.JsonNull,
+          },
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+      let updatedSnapshots = 0;
+      let removedPreviews = 0;
+
+      for (const snapshot of snapshots) {
+        if (!isChannelSnapshotDocument(snapshot.document)) {
+          continue;
+        }
+
+        let changed = false;
+        const signals = snapshot.document.signals.map((signal) => {
+          if (canGenerateSignalPreview(signal) || !signal.previewImage) {
+            return signal;
+          }
+
+          changed = true;
+          removedPreviews += 1;
+          const { previewImage: _previewImage, ...rest } = signal;
+          return rest;
+        });
+
+        if (!changed) {
+          continue;
+        }
+
+        await prisma.sourceSnapshot.update({
+          where: {
+            id: snapshot.id,
+          },
+          data: {
+            document: {
+              ...snapshot.document,
+              signals,
+            } satisfies Prisma.InputJsonValue,
+          },
+        });
+        updatedSnapshots += 1;
+      }
+
+      console.log("");
+      console.log("Signal preview metadata pruned.");
+      console.table([{
+        updatedSnapshots,
+        removedPreviews,
+        scope: options.snapshot ?? "completed snapshots",
+      }]);
+    } finally {
+      await prisma.$disconnect();
+    }
   });
 
 program

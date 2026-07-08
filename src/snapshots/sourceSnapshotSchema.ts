@@ -68,7 +68,7 @@ export type SnapshotSignalPerson = {
   segments?: string[];
 };
 
-export type SnapshotSignalPreviewImage = {
+export type SnapshotGeneratedImage = {
   provider: "fal.ai";
   model: string;
   url: string;
@@ -85,6 +85,16 @@ export type SnapshotSignalPreviewImage = {
   requestId?: string;
 };
 
+export type SnapshotSignalPreviewImage = SnapshotGeneratedImage;
+
+export type SnapshotSignalTimeline = {
+  firstPostAt?: string;
+  firstCommentAt?: string;
+  firstEvidenceAt?: string;
+  lastEvidenceAt?: string;
+  primaryEvidenceItemId?: string;
+};
+
 export type SnapshotSignal = {
   id: string;
   kind: SnapshotSignalKind;
@@ -99,6 +109,7 @@ export type SnapshotSignal = {
   url?: string;
   person?: SnapshotSignalPerson;
   previewImage?: SnapshotSignalPreviewImage;
+  timeline?: SnapshotSignalTimeline;
 };
 
 export type ChannelSnapshotHeroTheme = {
@@ -130,6 +141,7 @@ export type ChannelSnapshotDocument = {
     to: string | null;
   };
   heroTheme?: ChannelSnapshotHeroTheme;
+  coverImage?: SnapshotGeneratedImage;
   signals: SnapshotSignal[];
 };
 
