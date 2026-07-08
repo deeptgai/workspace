@@ -244,7 +244,6 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
     const byTag = !selectedTag || visibleSignalTags(signal).includes(selectedTag);
     return byTag;
   });
-  const currentTitle = signalTabs.find((tab) => tab.id === activeTab)?.label ?? "Все";
   const selectTab = (tab: SnapshotSignalKind | "all") => {
     setActiveTab(tab);
     setSelectedTag("");
@@ -473,9 +472,9 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
 	              {activeMessage ? (
 	                <div className="mb-3 flex flex-wrap gap-1.5">
 	                  <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">{formatDateTime(activeMessage.publishedAt)}</span>
-	                  <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">{formatNumber(activeMessage.views)} views</span>
-	                  <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">{formatNumber(activeMessage.reactionsTotal)} reactions</span>
-	                  <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">score {activeMessage.engagementScore.toFixed(2)}</span>
+	                  <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">{formatNumber(activeMessage.views)} просмотров</span>
+	                  <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">{formatNumber(activeMessage.reactionsTotal)} реакций</span>
+	                  <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">рейтинг {activeMessage.engagementScore.toFixed(2)}</span>
 	                </div>
 	              ) : null}
 
