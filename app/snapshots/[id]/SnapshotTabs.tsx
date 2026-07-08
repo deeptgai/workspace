@@ -106,6 +106,9 @@ const structuralTags = new Set([
   "tool",
   "place",
   "person",
+  "профиль",
+  "profile",
+  "peer",
 ]);
 
 function formatNumber(value: number | null | undefined) {
@@ -183,7 +186,14 @@ function signalKindClass(kind: SnapshotSignalKind) {
 }
 
 function visibleSignalTags(signal: SnapshotSignal) {
-  return (signal.tags ?? []).filter((tag) => !structuralTags.has(tag.trim().toLowerCase()));
+  return (signal.tags ?? []).filter((tag) => {
+    const trimmed = tag.trim();
+
+    return Boolean(trimmed) &&
+      !structuralTags.has(trimmed.toLowerCase()) &&
+      trimmed.length <= 24 &&
+      trimmed.split(/\s+/).length <= 3;
+  });
 }
 
 function avatarClass(signal: SnapshotSignal) {

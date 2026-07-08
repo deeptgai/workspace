@@ -726,16 +726,9 @@ const snapshotTagLabels: Record<SnapshotItemTag, string> = {
   action_required: "действие",
 };
 
-function metricTagCandidates(item: ChannelSnapshotItem) {
-  return (item.metrics ?? [])
-    .filter((metric) => ["mentioned_entity", "learning_asset", "recommendation_source"].includes(metric.key))
-    .flatMap((metric) => compactText(metric.value, 42) ? [compactText(metric.value, 42)] : []);
-}
-
 function signalTags(section: ChannelSnapshotSection, item: ChannelSnapshotItem, kind: SnapshotSignalKind) {
   const tags = [
     ...(item.tags ?? []).map((tag) => snapshotTagLabels[tag] ?? tag),
-    ...metricTagCandidates(item),
   ].map((tag) => tag.trim()).filter((tag) => {
     if (!tag) {
       return false;
@@ -759,10 +752,13 @@ function signalTags(section: ChannelSnapshotSection, item: ChannelSnapshotItem, 
       "места",
       "человек",
       "люди",
+      "профиль",
+      "profile",
+      "peer",
       section.title.toLowerCase(),
       kind,
     ].includes(normalized);
-  });
+  }).filter((tag) => tag.length <= 24 && tag.split(/\s+/).length <= 3);
 
   return [...new Set(tags)].slice(0, 7);
 }
