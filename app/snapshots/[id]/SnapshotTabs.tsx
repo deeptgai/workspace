@@ -384,10 +384,10 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
                         <p className="m-0 mt-2 text-sm leading-6 text-slate-600">{cleanSnapshotText(signal.summary)}</p>
                       </div>
 
-                      <div className="mt-3 flex flex-wrap gap-1.5">
-                        {visibleSignalTags(signal).map((tag) => (
-                          <button
-                          className="cursor-pointer rounded-full border border-slate-200 bg-[#f4f0e7] px-2 py-1 text-xs font-black text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"
+	                      <div className="mt-3 flex flex-wrap gap-1.5">
+	                        {visibleSignalTags(signal).map((tag) => (
+	                          <button
+                          className="cursor-pointer rounded-full border border-slate-200 bg-[#f4f0e7] px-1.5 py-0.5 text-[10px] font-black leading-4 text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"
 	                            key={tag}
 	                            type="button"
 	                            onClick={(event) => {
