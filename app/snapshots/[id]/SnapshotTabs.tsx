@@ -390,7 +390,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
 	                      <div className="mt-2 flex flex-wrap gap-1">
 	                        {visibleSignalTags(signal).map((tag) => (
 	                          <button
-                          className="cursor-pointer rounded-full border border-slate-200 bg-[#f4f0e7] px-1.5 py-0.5 text-xs font-medium leading-4 text-slate-500 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"
+                          className="cursor-pointer rounded-full border border-slate-200 bg-[#f4f0e7] px-2 py-1 text-xs font-black text-slate-500 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"
 	                            key={tag}
 	                            type="button"
 	                            onClick={(event) => {
