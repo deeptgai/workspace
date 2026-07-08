@@ -265,7 +265,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname }: 
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
 	            <b className="block text-sm font-black text-slate-950">Карта сигналов</b>
 	            <span className="mt-1 block text-xs font-bold text-slate-500">
-	              {formatNumber(signals.length)} сигналов · {formatNumber(evidenceMessages.length)} подтверждений
+	              {formatNumber(signals.length)} сигналов
 	            </span>
           </div>
           <nav className="mt-3 grid grid-cols-2 gap-1.5 lg:grid-cols-1" aria-label="Разделы сигналов">
