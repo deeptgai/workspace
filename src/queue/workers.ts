@@ -7,7 +7,7 @@ import { loadEmbeddingsConfig } from "../embeddings/config.js";
 import { importChannelComments } from "../import/importComments.js";
 import { importMessageBatch, type ImportBatchPhase } from "../import/importMessages.js";
 import { embedMessages } from "../rag/embedMessages.js";
-import { formatContentBatch } from "../formatting/contentFormatter.js";
+import { formatContentBatch, formatContentItemsByExternalIds } from "../formatting/contentFormatter.js";
 import { generateCommunitySnapshot, generateCommunitySnapshotSection } from "../snapshots/communitySnapshot.js";
 import { generateAndStoreSnapshotCoverImage } from "../images/snapshotCoverImages.js";
 import { generateAndStoreSignalPreviewImage } from "../images/signalPreviewImages.js";
@@ -355,12 +355,18 @@ export function startWorkers() {
         throw new Error(`Source not found in database: ${job.data.chat}`);
       }
 
-      const result = await formatContentBatch(prisma, loadAiConfig(), {
-        sourceId: chat.id,
-        limit: job.data.limit,
-        kind: job.data.kind,
-        skipExisting: job.data.skipExisting,
-      });
+      const result = job.data.itemIds?.length
+        ? await formatContentItemsByExternalIds(prisma, loadAiConfig(), {
+            sourceId: chat.id,
+            externalIds: job.data.itemIds,
+            skipExisting: job.data.skipExisting,
+          })
+        : await formatContentBatch(prisma, loadAiConfig(), {
+            sourceId: chat.id,
+            limit: job.data.limit,
+            kind: job.data.kind,
+            skipExisting: job.data.skipExisting,
+          });
 
       console.log(`[${CONTENT_FORMATTING_QUEUE}] job ${job.id} complete`, result);
       return result;

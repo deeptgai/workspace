@@ -27,6 +27,7 @@ export type ContentFormattingJobData = {
   chat: string;
   limit: number;
   kind?: "post" | "comment";
+  itemIds?: string[];
   skipExisting?: boolean;
 };
 

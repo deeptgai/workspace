@@ -4,7 +4,7 @@ import type { AiConfig } from "../ai/config.js";
 import { loadEmbeddingsConfig } from "../embeddings/config.js";
 import { searchMessages, type SearchMessageResult } from "../rag/searchMessages.js";
 import { canGenerateSignalPreview } from "../images/falSignalPreview.js";
-import { enqueueSignalPreviewImageJob, enqueueSnapshotCoverImageJob } from "../queue/enqueue.js";
+import { enqueueContentFormattingJob, enqueueSignalPreviewImageJob, enqueueSnapshotCoverImageJob } from "../queue/enqueue.js";
 import {
   CHANNEL_SNAPSHOT_SCHEMA_VERSION,
   type ChannelSnapshotDocument,
@@ -1699,6 +1699,33 @@ async function completeSnapshotIfReady(
     } catch (error) {
       logAgent(options ?? {}, "tool:snapshotCoverImage:enqueueFailed", {
         snapshotId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const evidenceItemIds = [...new Set(signals.flatMap((signal) =>
+    (signal.evidence ?? []).map((evidence) => evidence.itemId).filter(Boolean),
+  ))];
+
+  if (evidenceItemIds.length) {
+    try {
+      const formattingJob = await enqueueContentFormattingJob({
+        chat: chat.username ? `@${chat.username}` : chat.title,
+        limit: evidenceItemIds.length,
+        itemIds: evidenceItemIds,
+        skipExisting: true,
+      });
+
+      logAgent(options ?? {}, "tool:contentFormatting:enqueued", {
+        snapshotId,
+        jobId: formattingJob.id,
+        count: evidenceItemIds.length,
+      });
+    } catch (error) {
+      logAgent(options ?? {}, "tool:contentFormatting:enqueueFailed", {
+        snapshotId,
+        count: evidenceItemIds.length,
         error: error instanceof Error ? error.message : String(error),
       });
     }

@@ -15,6 +15,12 @@ type FormatContentBatchOptions = {
   skipExisting?: boolean;
 };
 
+type FormatContentItemsByExternalIdsOptions = {
+  sourceId: string;
+  externalIds: string[];
+  skipExisting?: boolean;
+};
+
 type FormatterResponse = {
   formattedText?: string;
   changed?: boolean;
@@ -223,6 +229,73 @@ export async function formatContentBatch(
     selected: items.length,
     formatted,
     skipped,
+    model: aiConfig.model,
+  };
+}
+
+export async function formatContentItemsByExternalIds(
+  prisma: PrismaClient,
+  aiConfig: AiConfig,
+  options: FormatContentItemsByExternalIdsOptions,
+) {
+  const externalIds = [...new Set(options.externalIds.map((id) => id.trim()).filter(Boolean))];
+
+  if (!externalIds.length) {
+    return {
+      selected: 0,
+      formatted: 0,
+      skipped: 0,
+      missing: 0,
+      model: aiConfig.model,
+    };
+  }
+
+  const items = await prisma.contentItem.findMany({
+    where: {
+      sourceId: options.sourceId,
+      externalId: {
+        in: externalIds,
+      },
+      text: {
+        not: null,
+      },
+      ...(options.skipExisting === false
+        ? {}
+        : {
+            formats: {
+              none: {
+                model: aiConfig.model,
+              },
+            },
+          }),
+    },
+    select: {
+      id: true,
+      externalId: true,
+    },
+  });
+  const foundExternalIds = new Set(items.map((item) => item.externalId));
+  let formatted = 0;
+  let skipped = 0;
+
+  for (const item of items) {
+    const result = await formatContentItem(prisma, aiConfig, {
+      itemId: item.id,
+      skipExisting: options.skipExisting,
+    });
+
+    if (result.status === "formatted") {
+      formatted += 1;
+    } else {
+      skipped += 1;
+    }
+  }
+
+  return {
+    selected: items.length,
+    formatted,
+    skipped,
+    missing: externalIds.filter((id) => !foundExternalIds.has(id)).length,
     model: aiConfig.model,
   };
 }

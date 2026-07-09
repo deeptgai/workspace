@@ -3,8 +3,31 @@ import type { ChannelSnapshotDocument, SnapshotSignal } from "../../src/snapshot
 
 const defaultDescription = "Карта идей, болей, инсайтов, материалов, мест и людей по источнику.";
 
+function siteUrl() {
+  const configuredUrl =
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    process.env.SITE_URL ||
+    (process.env.DOMAIN ? `https://${process.env.DOMAIN}` : undefined) ||
+    "https://tgdeep.xyz";
+
+  return configuredUrl.replace(/\/+$/, "");
+}
+
+function absoluteUrl(url: string | undefined) {
+  if (!url) {
+    return undefined;
+  }
+
+  if (/^https?:\/\//i.test(url)) {
+    return url;
+  }
+
+  return `${siteUrl()}${url.startsWith("/") ? "" : "/"}${url}`;
+}
+
 function imageMeta(url: string | undefined) {
-  return url ? [{ url }] : undefined;
+  const absoluteImageUrl = absoluteUrl(url);
+  return absoluteImageUrl ? [{ url: absoluteImageUrl }] : undefined;
 }
 
 export function snapshotMetadata(params: {
