@@ -1,6 +1,6 @@
 import { createQueues } from "./queues.js";
 import { enqueueSourceSnapshotJob as enqueueSharedSourceSnapshotJob } from "./snapshotQueue.js";
-import type { SourceSnapshotJobData, SourceSnapshotSectionJobData, CommentImportJobData, ContentEmbeddingJobData, TelegramImportJobData, SignalPreviewImageJobData, SnapshotCoverImageJobData } from "./types.js";
+import type { SourceSnapshotJobData, SourceSnapshotSectionJobData, CommentImportJobData, ContentEmbeddingJobData, TelegramImportJobData, SignalPreviewImageJobData, SnapshotCoverImageJobData, ContentFormattingJobData } from "./types.js";
 
 function slug(value: string): string {
   return value.trim().replace(/^@/, "").toLowerCase().replace(/[^a-z0-9а-яё_-]+/giu, "-");
@@ -15,6 +15,7 @@ async function closeQueues(queues: ReturnType<typeof createQueues>) {
     queues.telegramImportQueue.close(),
     queues.commentImportQueue.close(),
     queues.contentEmbeddingQueue.close(),
+    queues.contentFormattingQueue.close(),
     queues.sourceSnapshotQueue.close(),
     queues.sourceSnapshotSectionQueue.close(),
     queues.snapshotCoverImageQueue.close(),
@@ -52,6 +53,18 @@ export async function enqueueContentEmbeddingJob(data: ContentEmbeddingJobData) 
   try {
     return await queues.contentEmbeddingQueue.add("embed", data, {
       jobId: uniqueJobId("embed", data.chat),
+    });
+  } finally {
+    await closeQueues(queues);
+  }
+}
+
+export async function enqueueContentFormattingJob(data: ContentFormattingJobData) {
+  const queues = createQueues();
+
+  try {
+    return await queues.contentFormattingQueue.add("format", data, {
+      jobId: uniqueJobId("format-content", data.chat),
     });
   } finally {
     await closeQueues(queues);

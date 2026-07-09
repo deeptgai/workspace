@@ -104,6 +104,7 @@ model ContentItem {
   children   ContentItem[]      @relation("ContentThread")
   actor      Actor?             @relation(fields: [actorId], references: [id], onDelete: SetNull)
   embeddings ContentEmbedding[]
+  formats    ContentItemFormat[]
 
   @@unique([provider, sourceId, externalId, kind])
   @@index([sourceId, publishedAt])
@@ -113,6 +114,25 @@ model ContentItem {
   @@index([sourceId, engagementScore])
   @@index([actorId])
   @@index([provider])
+}
+
+model ContentItemFormat {
+  id            String   @id @default(cuid())
+  itemId        String
+  model         String
+  textHash      String
+  formattedText String
+  changed       Boolean  @default(false)
+  confidence    Float?
+  notes         Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  item ContentItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, model])
+  @@index([itemId])
+  @@index([model])
 }
 
 model ContentEmbedding {

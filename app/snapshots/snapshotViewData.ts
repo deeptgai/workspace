@@ -5,8 +5,10 @@ type Snapshot = NonNullable<Awaited<ReturnType<typeof getSnapshot>>>;
 export function getSnapshotEvidenceMessages(snapshot: Snapshot) {
   return snapshot.evidenceMessages.map((message) => ({
     externalId: message.externalId,
+    kind: message.kind,
     publishedAt: message.publishedAt.toISOString(),
     text: message.text,
+    formattedText: message.formats[0]?.formattedText ?? null,
     views: message.views,
     forwards: message.forwards,
     reactionsTotal: message.reactionsTotal,

@@ -352,6 +352,96 @@ program
   });
 
 program
+  .command("format:enqueue")
+  .description("Enqueue editorial Markdown formatting for stored posts/comments")
+  .argument("<chat>", "Stored chat id, exact title, username, or @username")
+  .option("-l, --limit <number>", "Maximum number of content items to format", "50")
+  .option("-k, --kind <kind>", "Restrict to kind: post or comment")
+  .option("--force", "Reformat even when a format already exists for the current AI model")
+  .action(async (
+    chat: string,
+    options: {
+      limit: string;
+      kind?: string;
+      force?: boolean;
+    },
+  ) => {
+    const limit = parsePositiveInteger(options.limit, "--limit");
+
+    if (options.kind && !["post", "comment"].includes(options.kind)) {
+      throw new Error("--kind must be one of: post, comment.");
+    }
+
+    const { enqueueContentFormattingJob } = await import("./queue/enqueue.js");
+    const job = await enqueueContentFormattingJob({
+      chat,
+      limit,
+      kind: options.kind as "post" | "comment" | undefined,
+      skipExisting: !options.force,
+    });
+
+    console.log("");
+    console.log("Content formatting job enqueued.");
+    console.table([{
+      queue: "content-formatting",
+      jobId: job.id,
+      chat,
+      limit,
+      kind: options.kind ?? "all",
+      force: Boolean(options.force),
+    }]);
+  });
+
+program
+  .command("format:run")
+  .description("Run editorial Markdown formatting locally without BullMQ")
+  .argument("<chat>", "Stored chat id, exact title, username, or @username")
+  .option("-l, --limit <number>", "Maximum number of content items to format", "10")
+  .option("-k, --kind <kind>", "Restrict to kind: post or comment")
+  .option("--force", "Reformat even when a format already exists for the current AI model")
+  .action(async (
+    chat: string,
+    options: {
+      limit: string;
+      kind?: string;
+      force?: boolean;
+    },
+  ) => {
+    const limit = parsePositiveInteger(options.limit, "--limit");
+
+    if (options.kind && !["post", "comment"].includes(options.kind)) {
+      throw new Error("--kind must be one of: post, comment.");
+    }
+
+    try {
+      const storedChat = await findStoredSource(prisma, chat);
+
+      if (!storedChat) {
+        throw new Error(`Source not found in database: ${chat}`);
+      }
+
+      const { loadAiConfig } = await import("./ai/config.js");
+      const { formatContentBatch } = await import("./formatting/contentFormatter.js");
+      const result = await formatContentBatch(prisma, loadAiConfig(), {
+        sourceId: storedChat.id,
+        limit,
+        kind: options.kind as "post" | "comment" | undefined,
+        skipExisting: !options.force,
+      });
+
+      console.log("");
+      console.log("Content formatting complete.");
+      console.table([{
+        chat: storedChat.title,
+        kind: options.kind ?? "all",
+        ...result,
+      }]);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+program
   .command("queue:status")
   .description("Show BullMQ queue status")
   .action(async () => {
@@ -359,10 +449,11 @@ program
     const queues = createQueues();
 
     try {
-      const [importCounts, commentImportCounts, embeddingCounts, snapshotCounts, snapshotSectionCounts] = await Promise.all([
+      const [importCounts, commentImportCounts, embeddingCounts, formattingCounts, snapshotCounts, snapshotSectionCounts] = await Promise.all([
         queues.telegramImportQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
         queues.commentImportQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
         queues.contentEmbeddingQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
+        queues.contentFormattingQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
         queues.sourceSnapshotQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
         queues.sourceSnapshotSectionQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
       ]);
@@ -375,6 +466,10 @@ program
         {
           queue: "message-embedding",
           ...embeddingCounts,
+        },
+        {
+          queue: "content-formatting",
+          ...formattingCounts,
         },
         {
           queue: "comment-import",
@@ -394,6 +489,7 @@ program
         ...await queues.telegramImportQueue.getActive(),
         ...await queues.commentImportQueue.getActive(),
         ...await queues.contentEmbeddingQueue.getActive(),
+        ...await queues.contentFormattingQueue.getActive(),
         ...await queues.sourceSnapshotQueue.getActive(),
         ...await queues.sourceSnapshotSectionQueue.getActive(),
       ];
@@ -412,8 +508,11 @@ program
       await queues.telegramImportQueue.close();
       await queues.commentImportQueue.close();
       await queues.contentEmbeddingQueue.close();
+      await queues.contentFormattingQueue.close();
       await queues.sourceSnapshotQueue.close();
       await queues.sourceSnapshotSectionQueue.close();
+      await queues.snapshotCoverImageQueue.close();
+      await queues.signalPreviewImageQueue.close();
     }
   });
 

@@ -203,6 +203,12 @@ export async function getSnapshot(snapshotId: string) {
         },
         include: {
           actor: true,
+          formats: {
+            where: {
+              model: process.env.AI_MODEL || "unknown",
+            },
+            take: 1,
+          },
         },
       });
   const peopleMessageKind = snapshot.source.type === "group" ? "post" : "comment";

@@ -6,6 +6,9 @@ import {
   BookOpen,
   CalendarDays,
   ExternalLink,
+  Eye,
+  Gauge,
+  Heart,
   AlertTriangle,
   Lightbulb,
   MapPin,
@@ -29,8 +32,10 @@ import { sortSignalsDescending } from "../../../src/snapshots/signalOrdering";
 
 type EvidenceMessage = {
   externalId: string;
+  kind: string;
   publishedAt: string;
   text: string | null;
+  formattedText: string | null;
   views: number | null;
   forwards: number | null;
   reactionsTotal: number;
@@ -203,7 +208,7 @@ function signalTimelineBadges(signal: SnapshotSignal) {
   return [...new Set(labels)].slice(0, 2);
 }
 
-function signalYear(signal: SnapshotSignal) {
+function signalDate(signal: SnapshotSignal) {
   const value = signal.timeline?.lastEvidenceAt ??
     signal.timeline?.firstEvidenceAt ??
     signal.timeline?.firstPostAt ??
@@ -215,7 +220,17 @@ function signalYear(signal: SnapshotSignal) {
 
   const date = new Date(value);
 
-  return Number.isNaN(date.getTime()) ? null : String(date.getFullYear());
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function signalYear(signal: SnapshotSignal) {
+  const date = signalDate(signal);
+
+  return date ? String(date.getFullYear()) : null;
+}
+
+function signalMonthIndex(signal: SnapshotSignal) {
+  return signalDate(signal)?.getMonth() ?? null;
 }
 
 function shouldShowPreviewImage(signal: SnapshotSignal) {
@@ -296,10 +311,189 @@ function visibleSignalTags(signal: SnapshotSignal) {
   });
 }
 
+function capitalizeLabel(label: string) {
+  return label ? `${label[0].toUpperCase()}${label.slice(1)}` : label;
+}
+
+function renderInlineMarkdown(text: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+
+  return parts.map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong className="font-black text-slate-900" key={index}>{part.slice(2, -2)}</strong>;
+    }
+
+    return <Fragment key={index}>{part}</Fragment>;
+  });
+}
+
+function FormattedText({ text }: { text: string }) {
+  const blocks: Array<{ type: "paragraph" | "quote" | "list" | "heading"; lines: string[] }> = [];
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  let listLines: string[] = [];
+  let paragraphLines: string[] = [];
+
+  const flushParagraph = () => {
+    if (paragraphLines.length) {
+      blocks.push({ type: "paragraph", lines: paragraphLines });
+      paragraphLines = [];
+    }
+  };
+  const flushList = () => {
+    if (listLines.length) {
+      blocks.push({ type: "list", lines: listLines });
+      listLines = [];
+    }
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    if (trimmed.startsWith(">")) {
+      flushParagraph();
+      flushList();
+      blocks.push({ type: "quote", lines: [trimmed.replace(/^>\s*/, "")] });
+      continue;
+    }
+
+    if (/^#{1,3}\s+/.test(trimmed)) {
+      flushParagraph();
+      flushList();
+      blocks.push({ type: "heading", lines: [trimmed.replace(/^#{1,3}\s+/, "")] });
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed)) {
+      flushParagraph();
+      listLines.push(trimmed.replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, ""));
+      continue;
+    }
+
+    flushList();
+    paragraphLines.push(trimmed);
+  }
+
+  flushParagraph();
+  flushList();
+
+  return (
+    <div className="space-y-3 whitespace-normal text-[15px] leading-7 text-slate-700">
+      {blocks.map((block, index) => {
+        if (block.type === "list") {
+          return (
+            <ul className="m-0 list-disc space-y-1 pl-5" key={index}>
+              {block.lines.map((line, lineIndex) => (
+                <li key={lineIndex}>{renderInlineMarkdown(line)}</li>
+              ))}
+            </ul>
+          );
+        }
+
+        if (block.type === "quote") {
+          return (
+            <blockquote className="m-0 rounded-lg border-l-4 border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-950" key={index}>
+              {renderInlineMarkdown(block.lines.join(" "))}
+            </blockquote>
+          );
+        }
+
+        if (block.type === "heading") {
+          return (
+            <h3 className="m-0 text-lg font-black leading-tight text-slate-950" key={index}>
+              {renderInlineMarkdown(block.lines.join(" "))}
+            </h3>
+          );
+        }
+
+        return (
+          <p className="m-0" key={index}>
+            {renderInlineMarkdown(block.lines.join(" "))}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 function avatarClass(signal: SnapshotSignal) {
   if (signal.kind !== "person") return "";
 
   return "grid h-11 w-11 flex-none place-items-center rounded-full bg-gradient-to-br from-emerald-700 to-lime-300 text-sm font-black text-white shadow-inner ring-2 ring-white/40";
+}
+
+const monthShortLabels = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"];
+
+function YearSignalMiniMap({
+  signals,
+  onSignalClick,
+}: {
+  signals: SnapshotSignal[];
+  onSignalClick: (signal: SnapshotSignal) => void;
+}) {
+  const signalsByMonth = monthShortLabels.map((_, month) =>
+    signals.filter((signal) => signalMonthIndex(signal) === month),
+  ).map((monthSignals, month) => ({ label: monthShortLabels[month], monthSignals }));
+
+  return (
+    <div className="col-span-full overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm" aria-label="Мини-карта сигналов по месяцам">
+      <div
+        className="grid w-full grid-cols-12 overflow-hidden rounded-lg bg-white"
+        style={{
+          columnGap: 0,
+          gap: 0,
+          rowGap: 0,
+        }}
+      >
+        {signalsByMonth.map(({ label, monthSignals }) => (
+          <div className="min-h-16 min-w-0 border-r border-slate-100 p-2 last:border-r-0" key={label}>
+            <div className="flex items-center justify-center gap-1 px-1 pb-2 pt-1 leading-none text-center">
+              <span className="text-[10px] font-black uppercase text-slate-500">{label}</span>
+            </div>
+            <div
+              className="grid"
+              style={{
+                columnGap: 0,
+                gap: 0,
+                gridTemplateColumns: "repeat(2, 24px)",
+                rowGap: 0,
+              }}
+            >
+              {monthSignals.slice(0, 8).map((signal) => (
+                <button
+                  className="group/thumb relative block aspect-square cursor-pointer overflow-hidden border-0 bg-transparent p-0 leading-none hover:z-10 hover:ring-1 hover:ring-emerald-300"
+                  key={signal.id}
+                  style={{ margin: 0 }}
+                  type="button"
+                  title={cleanSnapshotText(signal.title)}
+                  onClick={() => onSignalClick(signal)}
+                >
+                  {shouldShowPreviewImage(signal) ? (
+                    <img alt="" className="block h-full w-full object-cover" loading="lazy" src={signal.previewImage?.url} />
+                  ) : (
+                    (() => {
+                      const Icon = signalTabIcons[signal.kind];
+
+                      return (
+                        <span className={`${signalKindClass(signal.kind)} grid h-full w-full place-items-center rounded-none px-0 py-0`}>
+                          <Icon className="h-3.5 w-3.5" strokeWidth={2.4} />
+                        </span>
+                      );
+                    })()
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function heroSummary(snapshot: ChannelSnapshotDocument, signals: SnapshotSignal[]) {
@@ -596,15 +790,23 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
                     const year = signalYear(signal) ?? "Без даты";
                     const previousYear = index > 0 ? signalYear(filteredSignals[index - 1]) ?? "Без даты" : null;
                     const showYearDivider = year !== previousYear;
+                    const yearSignals = showYearDivider && year !== "Без даты"
+                      ? filteredSignals.filter((item) => signalYear(item) === year)
+                      : [];
 
                   return (
                       <Fragment key={signal.id}>
                         {showYearDivider ? (
-                          <div className="col-span-full flex items-center gap-3 py-2 first:pt-0" aria-label={`Сигналы за ${year}`}>
-                            <span className="h-px flex-1 bg-slate-200" />
-                            <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-black text-slate-500 shadow-sm">{year}</span>
-                            <span className="h-px flex-1 bg-slate-200" />
-                          </div>
+                          <>
+                            <div className="col-span-full flex items-center gap-3 py-2 first:pt-0" aria-label={`Сигналы за ${year}`}>
+                              <span className="h-px flex-1 bg-slate-200" />
+                              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-black text-slate-500 shadow-sm">{year}</span>
+                              <span className="h-px flex-1 bg-slate-200" />
+                            </div>
+                            {yearSignals.length ? (
+                              <YearSignalMiniMap signals={yearSignals} onSignalClick={openSignal} />
+                            ) : null}
+                          </>
                         ) : null}
 	                      <article
 	                        className="group relative flex min-h-[190px] cursor-pointer flex-col justify-between rounded-lg border border-slate-200 bg-white p-3 shadow-sm transition duration-200 hover:-translate-y-1 hover:border-emerald-200 hover:shadow-lg motion-safe:animate-[snapshotFadeIn_320ms_ease-out]"
@@ -710,8 +912,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
 	          >
 	            <header className="flex items-start justify-between gap-4 border-b border-slate-200 bg-[#f9f6ed] p-4">
 	              <div className="min-w-0">
-	                <span className={signalKindClass(activeSignal.kind)}>{kindLabels[activeSignal.kind]}</span>
-	                <h2 className="m-0 mt-2 text-2xl font-black leading-tight text-slate-950">{cleanSnapshotText(activeSignal.title)}</h2>
+	                <h2 className="m-0 text-2xl font-black leading-tight text-slate-950">{cleanSnapshotText(activeSignal.title)}</h2>
 	              </div>
 	              <button
 	                className="grid h-10 w-10 flex-none cursor-pointer place-items-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-rose-50 hover:text-rose-700"
@@ -726,7 +927,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
 	            <div className="min-h-0 overflow-auto p-4">
                 <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1" role="tablist" aria-label="Содержимое сигнала">
                   <button
-                    className={`min-h-10 flex-none cursor-pointer rounded-lg border px-3 py-2 text-sm font-black transition hover:-translate-y-0.5 ${
+                    className={`min-h-10 flex-none cursor-pointer rounded-lg border px-3 py-2 text-sm font-black transition ${
                       activeEvidenceItemId === null ? "border-emerald-200 bg-emerald-50 text-emerald-800 shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"
                     }`}
                     type="button"
@@ -734,15 +935,19 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
                     aria-selected={activeEvidenceItemId === null}
                     onClick={() => setActiveEvidenceItemId(null)}
                   >
-                    Содержание
+                    {capitalizeLabel(kindLabels[activeSignal.kind])}
                   </button>
 	              {activeSignalEvidence.length ? (
 	                  <>
 	                  {activeSignalEvidence.map((evidence, index) => {
 	                    const isActive = activeEvidence?.itemId === evidence.itemId;
+                      const message = evidenceById.get(evidence.itemId);
+                      const evidenceLabel = message?.kind === "comment" ? "Комментарий" : "Пост";
+                      const evidenceDate = message ? formatSignalPeriod(message.publishedAt) : null;
+
 	                    return (
 	                      <button
-	                        className={`min-h-10 flex-none cursor-pointer rounded-lg border px-3 py-2 text-sm font-black transition hover:-translate-y-0.5 ${
+	                        className={`min-h-10 flex-none cursor-pointer rounded-lg border px-3 py-2 text-sm font-black transition ${
 	                          isActive ? "border-emerald-200 bg-emerald-50 text-emerald-800 shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"
 	                        }`}
 	                        key={evidence.itemId}
@@ -751,7 +956,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
 	                        aria-selected={isActive}
 	                        onClick={() => setActiveEvidenceItemId(evidence.itemId)}
 	                      >
-	                        Пост {index + 1}
+	                        {evidenceDate ? `${evidenceLabel} · ${evidenceDate}` : `${evidenceLabel} ${index + 1}`}
 	                      </button>
 	                    );
 	                  })}
@@ -761,21 +966,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
 
                 {activeEvidenceItemId === null ? (
                   <div>
-                    {shouldShowPreviewImage(activeSignal) ? (
-                      <img
-                        alt=""
-                        className="aspect-[4/3] max-h-[420px] w-full rounded-lg object-cover"
-                        src={activeSignal.previewImage?.url}
-                      />
-                    ) : null}
                     <p className="m-0 mt-3 max-w-3xl text-base leading-7 text-slate-700">{cleanSnapshotText(activeSignal.summary)}</p>
-                    {signalTimelineBadges(activeSignal).length ? (
-                      <div className="mt-3 flex flex-wrap gap-1.5">
-                        {signalTimelineBadges(activeSignal).map((label) => (
-                          <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600 ring-1 ring-slate-200" key={label}>{label}</span>
-                        ))}
-                      </div>
-                    ) : null}
                     {visibleSignalTags(activeSignal).length ? (
                       <div className="mt-3 flex flex-wrap gap-1.5">
                         {visibleSignalTags(activeSignal).map((tag) => (
@@ -789,9 +980,18 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
                     {activeMessage ? (
                       <div className="mb-3 flex flex-wrap gap-1.5">
                         <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">{formatDateTime(activeMessage.publishedAt)}</span>
-                        <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">{formatNumber(activeMessage.views)} просмотров</span>
-                        <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">{formatNumber(activeMessage.reactionsTotal)} реакций</span>
-                        <span className="rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">рейтинг {activeMessage.engagementScore.toFixed(2)}</span>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-1 text-xs font-black text-slate-600">
+                          <Eye className="h-3.5 w-3.5 text-slate-400" strokeWidth={2.4} />
+                          {formatNumber(activeMessage.views)}
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-1 text-xs font-black text-rose-700">
+                          <Heart className="h-3.5 w-3.5 text-rose-400" strokeWidth={2.4} />
+                          {formatNumber(activeMessage.reactionsTotal)}
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-xs font-black text-emerald-700">
+                          <Gauge className="h-3.5 w-3.5 text-emerald-500" strokeWidth={2.4} />
+                          {activeMessage.engagementScore.toFixed(2)}
+                        </span>
                       </div>
                     ) : null}
 
@@ -803,8 +1003,12 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
                     ) : null}
 
                     {activeMessage ? (
-                      <div className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-white p-4 text-[15px] leading-7 text-slate-700">
-                        {activeMessage.text || "У сообщения нет текстового содержимого."}
+                      <div className="rounded-lg border border-slate-200 bg-white p-4">
+                        {activeMessage.formattedText || activeMessage.text ? (
+                          <FormattedText text={activeMessage.formattedText || activeMessage.text || ""} />
+                        ) : (
+                          <p className="m-0 text-[15px] leading-7 text-slate-500">У сообщения нет текстового содержимого.</p>
+                        )}
                       </div>
                     ) : (
                       <div className="rounded-lg border border-dashed border-slate-200 bg-white p-8 text-center text-slate-500">

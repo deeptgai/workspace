@@ -7,7 +7,7 @@ const workers = startWorkers();
 let shuttingDown = false;
 
 console.log("BullMQ workers started.");
-console.log("Queues: telegram-import, comment-import, message-embedding, source-snapshot, source-snapshot-section, snapshot-cover-image, signal-preview-image");
+console.log("Queues: telegram-import, comment-import, message-embedding, content-formatting, source-snapshot, source-snapshot-section, snapshot-cover-image, signal-preview-image");
 
 async function shutdown(signal: string) {
   if (shuttingDown) {
@@ -21,12 +21,14 @@ async function shutdown(signal: string) {
     workers.importWorker.close(),
     workers.commentImportWorker.close(),
     workers.embeddingWorker.close(),
+    workers.contentFormattingWorker.close(),
     workers.snapshotWorker.close(),
     workers.snapshotSectionWorker.close(),
     workers.snapshotCoverImageWorker.close(),
     workers.signalPreviewImageWorker.close(),
     workers.telegramImportQueue.close(),
     workers.contentEmbeddingQueue.close(),
+    workers.contentFormattingQueue.close(),
     workers.commentImportQueue.close(),
     workers.snapshotSectionQueue.close(),
     workers.snapshotCoverImageQueue.close(),

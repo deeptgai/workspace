@@ -23,6 +23,13 @@ export type ContentEmbeddingJobData = {
   limit: number;
 };
 
+export type ContentFormattingJobData = {
+  chat: string;
+  limit: number;
+  kind?: "post" | "comment";
+  skipExisting?: boolean;
+};
+
 export type CommentImportJobData = {
   chat: string;
   mode: "sync" | "new";
