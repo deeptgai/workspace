@@ -5,6 +5,7 @@ import { getSnapshot } from "../../../../data";
 import { getSnapshotEvidenceMessages, getSnapshotPeople } from "../../../../snapshots/snapshotViewData";
 import { SnapshotSeoContent } from "../../../../snapshots/SnapshotSeoContent";
 import { SnapshotTabs } from "../../../../snapshots/[id]/SnapshotTabs";
+import { signalMetadata } from "../../../../snapshots/metadata";
 
 export const dynamic = "force-dynamic";
 
@@ -30,19 +31,12 @@ export async function generateMetadata({ params }: SignalPageProps): Promise<Met
     ? `${activeSignal.title} — ${snapshot?.chat.title}`
     : snapshot ? `${snapshot.chat.title} — карта сигналов` : "Снимок";
 
-  return {
+  return signalMetadata({
     title,
     description: activeSignal?.summary || "Карта идей, болей, инсайтов, материалов, мест и людей по источнику.",
-    openGraph: {
-      title,
-      description: activeSignal?.summary || undefined,
-      type: "article",
-    },
-    robots: {
-      index: true,
-      follow: true,
-    },
-  };
+    document,
+    signal: activeSignal,
+  });
 }
 
 export default async function ShortSharedSignalPage({ params }: SignalPageProps) {

@@ -383,11 +383,11 @@ function FormattedText({ text }: { text: string }) {
   flushList();
 
   return (
-    <div className="space-y-3 whitespace-normal text-[15px] leading-7 text-slate-700">
+    <div className="space-y-5 whitespace-normal text-[15px] leading-8 text-slate-700">
       {blocks.map((block, index) => {
         if (block.type === "list") {
           return (
-            <ul className="m-0 list-disc space-y-1 pl-5" key={index}>
+            <ul className="m-0 list-disc space-y-2 pl-6 marker:text-slate-900" key={index}>
               {block.lines.map((line, lineIndex) => (
                 <li key={lineIndex}>{renderInlineMarkdown(line)}</li>
               ))}
@@ -397,7 +397,7 @@ function FormattedText({ text }: { text: string }) {
 
         if (block.type === "quote") {
           return (
-            <blockquote className="m-0 rounded-lg border-l-4 border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-950" key={index}>
+            <blockquote className="m-0 rounded-lg border-l-4 border-emerald-200 bg-emerald-50/70 px-4 py-3 text-emerald-950" key={index}>
               {renderInlineMarkdown(block.lines.join(" "))}
             </blockquote>
           );
@@ -405,7 +405,7 @@ function FormattedText({ text }: { text: string }) {
 
         if (block.type === "heading") {
           return (
-            <h3 className="m-0 text-lg font-black leading-tight text-slate-950" key={index}>
+            <h3 className="m-0 pt-1 text-xl font-black leading-snug text-slate-950" key={index}>
               {renderInlineMarkdown(block.lines.join(" "))}
             </h3>
           );
@@ -844,11 +844,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
                               <span className={avatarClass(signal)}>{personInitials(signal, person)}</span>
                             )}
                             <h3 className="m-0 text-lg font-black leading-tight text-slate-950">
-	                              {signal.url ? (
-	                                <a className="text-emerald-800 underline decoration-emerald-800/30 underline-offset-4 transition hover:text-emerald-950" href={signal.url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
-	                                  {cleanSnapshotText(signal.title)}
-	                                </a>
-                              ) : cleanSnapshotText(signal.title)}
+                              {cleanSnapshotText(signal.title)}
                             </h3>
                           </div>
                         ) : (
@@ -925,6 +921,13 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
 	            </header>
 	
 	            <div className="min-h-0 overflow-auto p-4">
+                {visibleSignalTags(activeSignal).length ? (
+                  <div className="mb-3 flex flex-wrap gap-1.5">
+                    {visibleSignalTags(activeSignal).map((tag) => (
+                      <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs font-black text-slate-600" key={tag}>{tag}</span>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1" role="tablist" aria-label="Содержимое сигнала">
                   <button
                     className={`min-h-10 flex-none cursor-pointer rounded-lg border px-3 py-2 text-sm font-black transition ${
@@ -966,12 +969,27 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
 
                 {activeEvidenceItemId === null ? (
                   <div>
-                    <p className="m-0 mt-3 max-w-3xl text-base leading-7 text-slate-700">{cleanSnapshotText(activeSignal.summary)}</p>
-                    {visibleSignalTags(activeSignal).length ? (
-                      <div className="mt-3 flex flex-wrap gap-1.5">
-                        {visibleSignalTags(activeSignal).map((tag) => (
-                          <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs font-black text-slate-600" key={tag}>{tag}</span>
-                        ))}
+                    <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-start">
+                      {shouldShowPreviewImage(activeSignal) ? (
+                        <img
+                          alt=""
+                          className="h-32 w-32 flex-none rounded-lg object-cover shadow-sm ring-1 ring-slate-200"
+                          src={activeSignal.previewImage?.url}
+                        />
+                      ) : null}
+                      <p className="m-0 text-base leading-7 text-slate-700">{cleanSnapshotText(activeSignal.summary)}</p>
+                    </div>
+                    {activeSignal.url ? (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <a
+                          className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-black text-sky-700 shadow-sm transition hover:border-sky-300 hover:bg-sky-100 hover:text-sky-900"
+                          href={activeSignal.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <ExternalLink size={15} />
+                          Открыть в Telegram
+                        </a>
                       </div>
                     ) : null}
                   </div>
@@ -1003,7 +1021,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
                     ) : null}
 
                     {activeMessage ? (
-                      <div className="rounded-lg border border-slate-200 bg-white p-4">
+                      <div className="rounded-lg border border-slate-200 bg-white p-4 sm:p-5">
                         {activeMessage.formattedText || activeMessage.text ? (
                           <FormattedText text={activeMessage.formattedText || activeMessage.text || ""} />
                         ) : (

@@ -6,6 +6,7 @@ import { AppShell } from "../../../components";
 import { formatDateTime, getSnapshot } from "../../../data";
 import { getSnapshotEvidenceMessages, getSnapshotPeople } from "../../snapshotViewData";
 import { SnapshotSeoContent } from "../../SnapshotSeoContent";
+import { signalMetadata } from "../../metadata";
 import { SnapshotTabs } from "../SnapshotTabs";
 
 export const dynamic = "force-dynamic";
@@ -38,12 +39,16 @@ export async function generateMetadata({ params }: SnapshotSignalPageProps): Pro
   const document = isChannelSnapshotDocument(snapshot?.document) ? snapshot.document : null;
   const activeSignal = document?.signals.find((signal) => signal.id === normalizedSignalId);
 
-  return {
-    title: activeSignal
-      ? `${activeSignal.title} — ${snapshot?.chat.title}`
-      : snapshot ? `${snapshot.chat.title} — карта сигналов` : "Снимок",
+  const title = activeSignal
+    ? `${activeSignal.title} — ${snapshot?.chat.title}`
+    : snapshot ? `${snapshot.chat.title} — карта сигналов` : "Снимок";
+
+  return signalMetadata({
+    title,
     description: activeSignal?.summary,
-  };
+    document,
+    signal: activeSignal,
+  });
 }
 
 export default async function SnapshotSignalPage({ params }: SnapshotSignalPageProps) {

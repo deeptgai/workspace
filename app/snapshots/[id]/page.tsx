@@ -6,6 +6,7 @@ import { AppShell } from "../../components";
 import { formatDateTime, getSnapshot } from "../../data";
 import { getSnapshotEvidenceMessages, getSnapshotPeople } from "../snapshotViewData";
 import { SnapshotSeoContent } from "../SnapshotSeoContent";
+import { snapshotMetadata } from "../metadata";
 import { SnapshotTabs } from "./SnapshotTabs";
 
 export const dynamic = "force-dynamic";
@@ -26,10 +27,15 @@ function snapshotSlug(title: string) {
 export async function generateMetadata({ params }: SnapshotPageProps): Promise<Metadata> {
   const { id } = await params;
   const snapshot = await getSnapshot(id);
+  const document = isChannelSnapshotDocument(snapshot?.document) ? snapshot.document : null;
+  const description = document?.signals.slice(0, 3).map((signal) => signal.title).join(" · ");
+  const title = snapshot ? `${snapshot.chat.title} — карта сигналов` : "Снимок";
 
-  return {
-    title: snapshot ? `${snapshot.chat.title} — карта сигналов` : "Снимок",
-  };
+  return snapshotMetadata({
+    title,
+    description,
+    document,
+  });
 }
 
 export default async function SnapshotPage({ params }: SnapshotPageProps) {

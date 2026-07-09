@@ -5,6 +5,7 @@ import { getSnapshot } from "../../../data";
 import { getSnapshotEvidenceMessages, getSnapshotPeople } from "../../../snapshots/snapshotViewData";
 import { SnapshotSeoContent } from "../../../snapshots/SnapshotSeoContent";
 import { SnapshotTabs } from "../../../snapshots/[id]/SnapshotTabs";
+import { snapshotMetadata } from "../../../snapshots/metadata";
 
 export const dynamic = "force-dynamic";
 
@@ -19,19 +20,11 @@ export async function generateMetadata({ params }: SharedSnapshotPageProps): Pro
   const description = document?.signals.slice(0, 3).map((signal) => signal.title).join(" · ");
   const title = snapshot ? `${snapshot.chat.title} — карта сигналов` : "Снимок";
 
-  return {
+  return snapshotMetadata({
     title,
     description: description || "Карта идей, болей, инсайтов, материалов, мест и людей по источнику.",
-    openGraph: {
-      title,
-      description: description || undefined,
-      type: "article",
-    },
-    robots: {
-      index: true,
-      follow: true,
-    },
-  };
+    document,
+  });
 }
 
 export default async function SharedSnapshotPage({ params }: SharedSnapshotPageProps) {
