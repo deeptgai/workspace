@@ -2,6 +2,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { putObject, stableObjectKey } from "../storage/objectStorage.js";
 import { isChannelSnapshotDocument, type SnapshotSignal, type SnapshotSignalPreviewImage } from "../snapshots/sourceSnapshotSchema.js";
 import { canGenerateSignalPreview, generateSignalPreviewImage } from "./falSignalPreview.js";
+import { withSnapshotDocumentUpdateLock } from "./snapshotDocumentUpdateLock.js";
 
 export type SignalPreviewImageResult =
   | {
@@ -24,30 +25,6 @@ export type SignalPreviewImageResult =
 type GenerateAndStoreSignalPreviewOptions = {
   skipExisting?: boolean;
 };
-
-const snapshotUpdateLocks = new Map<string, Promise<void>>();
-
-async function withSnapshotUpdateLock<T>(snapshotId: string, action: () => Promise<T>) {
-  const previous = snapshotUpdateLocks.get(snapshotId) ?? Promise.resolve();
-  let release!: () => void;
-  const currentLock = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const current = previous.catch(() => undefined).then(() => currentLock);
-
-  snapshotUpdateLocks.set(snapshotId, current);
-  await previous.catch(() => undefined);
-
-  try {
-    return await action();
-  } finally {
-    release();
-
-    if (snapshotUpdateLocks.get(snapshotId) === current) {
-      snapshotUpdateLocks.delete(snapshotId);
-    }
-  }
-}
 
 export async function generateAndStoreSignalPreviewImage(
   prisma: PrismaClient,
@@ -122,7 +99,7 @@ export async function generateAndStoreSignalPreviewImage(
     contentType: storedObject.contentType,
   };
 
-  await withSnapshotUpdateLock(snapshotId, async () => {
+  await withSnapshotDocumentUpdateLock(snapshotId, async () => {
     const latestSnapshot = await prisma.sourceSnapshot.findUnique({
       where: {
         id: snapshotId,

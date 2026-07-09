@@ -2,6 +2,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { isChannelSnapshotDocument, type SnapshotGeneratedImage } from "../snapshots/sourceSnapshotSchema.js";
 import { putObject, stableObjectKey } from "../storage/objectStorage.js";
 import { generateSnapshotCoverImage } from "./falSnapshotCover.js";
+import { withSnapshotDocumentUpdateLock } from "./snapshotDocumentUpdateLock.js";
 
 export type SnapshotCoverImageResult =
   | {
@@ -69,29 +70,31 @@ export async function generateAndStoreSnapshotCoverImage(
     contentType: storedObject.contentType,
   };
 
-  const latestSnapshot = await prisma.sourceSnapshot.findUnique({
-    where: {
-      id: snapshotId,
-    },
-    select: {
-      document: true,
-    },
-  });
+  await withSnapshotDocumentUpdateLock(snapshotId, async () => {
+    const latestSnapshot = await prisma.sourceSnapshot.findUnique({
+      where: {
+        id: snapshotId,
+      },
+      select: {
+        document: true,
+      },
+    });
 
-  if (!latestSnapshot || !isChannelSnapshotDocument(latestSnapshot.document)) {
-    throw new Error(`Snapshot document not found while saving cover image: ${snapshotId}`);
-  }
+    if (!latestSnapshot || !isChannelSnapshotDocument(latestSnapshot.document)) {
+      throw new Error(`Snapshot document not found while saving cover image: ${snapshotId}`);
+    }
 
-  await prisma.sourceSnapshot.update({
-    where: {
-      id: snapshotId,
-    },
-    data: {
-      document: {
-        ...latestSnapshot.document,
-        coverImage: storedCoverImage,
-      } as Prisma.InputJsonValue,
-    },
+    await prisma.sourceSnapshot.update({
+      where: {
+        id: snapshotId,
+      },
+      data: {
+        document: {
+          ...latestSnapshot.document,
+          coverImage: storedCoverImage,
+        } as Prisma.InputJsonValue,
+      },
+    });
   });
 
   return {
