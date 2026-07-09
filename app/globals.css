@@ -577,6 +577,18 @@ select {
   }
 }
 
+@keyframes snapshotDrawerIn {
+  from {
+    opacity: 0.85;
+    transform: translateX(-18px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 .accordion-chevron {
   transition: transform 0.2s ease;
 }

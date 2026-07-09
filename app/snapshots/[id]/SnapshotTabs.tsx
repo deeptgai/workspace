@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   Lightbulb,
   MapPin,
+  Menu,
   MessageCircleQuestion,
   Network,
   Sparkles,
@@ -602,6 +603,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
     initialActiveSignalId && signals.some((signal) => signal.id === initialActiveSignalId) ? initialActiveSignalId : null,
   );
   const [activeEvidenceItemId, setActiveEvidenceItemId] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const routeActiveSignalId = initialActiveSignalId && signals.some((signal) => signal.id === initialActiveSignalId)
     ? initialActiveSignalId
     : null;
@@ -670,9 +672,17 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
 
     return () => window.removeEventListener("popstate", syncSignalFromLocation);
   }, [signals, snapshotPath]);
+  useEffect(() => {
+    document.body.style.overflow = menuOpen ? "hidden" : "";
+
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [menuOpen]);
   const selectTab = (tab: SnapshotSignalKind | "all") => {
     setActiveTab(tab);
     setSelectedTag("");
+    setMenuOpen(false);
     window.scrollTo({
       top: 0,
       behavior: "smooth",
@@ -701,36 +711,44 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
   const heroLinkClass = compactHero
     ? "mb-2 inline-flex w-fit min-h-7 items-center rounded-full border border-white/25 bg-white/10 px-2.5 py-1 text-[11px] font-black text-white backdrop-blur transition duration-200 hover:bg-white/20 hover:text-white"
     : "mb-3 inline-flex w-fit min-h-8 items-center rounded-full border border-white/25 bg-white/10 px-3 py-1.5 text-xs font-black text-white backdrop-blur transition duration-200 hover:bg-white/20 hover:text-white";
+  const activeTabLabel = signalTabs.find((tab) => tab.id === activeTab)?.label ?? "Разделы";
+  const signalMenu = (navClassName: string, showTitle = true) => (
+    <>
+      {showTitle ? (
+        <div className="px-1 py-2">
+          <b className="block text-lg font-black text-slate-950">Карта сигналов</b>
+        </div>
+      ) : null}
+      <nav className={navClassName} aria-label="Разделы сигналов">
+        {signalTabs.map((tab) => {
+          const count = tab.id === "all" ? signals.length : signals.filter((signal) => signal.kind === tab.id).length;
+          const Icon = signalTabIcons[tab.id];
+          return (
+            <button
+              className={`group flex min-h-10 cursor-pointer items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-black transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800 ${
+                activeTab === tab.id ? "border-emerald-200 bg-emerald-50 text-emerald-800 shadow-sm" : "border-transparent text-slate-600"
+              }`}
+              key={tab.id}
+              type="button"
+              onClick={() => selectTab(tab.id)}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <Icon className="h-4 w-4 flex-none" strokeWidth={2.4} />
+                <span className="truncate">{tab.label}</span>
+              </span>
+              <span className="rounded-full bg-white px-2 py-0.5 text-xs font-black text-slate-500 shadow-sm">{count}</span>
+            </button>
+          );
+        })}
+      </nav>
+    </>
+  );
 
   return (
     <>
       <section className="grid items-start gap-4 lg:grid-cols-[248px_minmax(0,1fr)]">
-        <aside className="sticky top-4 z-20 rounded-lg border border-slate-200 bg-white/90 p-3 shadow-sm backdrop-blur-xl">
-          <div className="px-1 py-2">
-	            <b className="block text-base font-black text-slate-950">Карта сигналов</b>
-          </div>
-          <nav className="mt-3 grid grid-cols-2 gap-1.5 lg:grid-cols-1" aria-label="Разделы сигналов">
-            {signalTabs.map((tab) => {
-              const count = tab.id === "all" ? signals.length : signals.filter((signal) => signal.kind === tab.id).length;
-              const Icon = signalTabIcons[tab.id];
-              return (
-                <button
-                  className={`group flex min-h-10 cursor-pointer items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-black transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800 ${
-                    activeTab === tab.id ? "border-emerald-200 bg-emerald-50 text-emerald-800 shadow-sm" : "border-transparent text-slate-600"
-                  }`}
-                  key={tab.id}
-                  type="button"
-                  onClick={() => selectTab(tab.id)}
-                >
-                  <span className="flex min-w-0 items-center gap-2">
-                    <Icon className="h-4 w-4 flex-none" strokeWidth={2.4} />
-                    <span className="truncate">{tab.label}</span>
-                  </span>
-                  <span className="rounded-full bg-white px-2 py-0.5 text-xs font-black text-slate-500 shadow-sm">{count}</span>
-                </button>
-              );
-            })}
-          </nav>
+        <aside className="sticky top-4 z-20 hidden rounded-lg border border-slate-200 bg-white/90 p-3 shadow-sm backdrop-blur-xl lg:block">
+          {signalMenu("mt-3 grid grid-cols-1 gap-1.5")}
         </aside>
 
         <div className="min-w-0">
@@ -761,6 +779,19 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
               )}
             </div>
           </section>
+
+          <div className="mt-3 lg:hidden">
+            <button
+              className="inline-flex min-h-11 w-full min-w-0 cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-800 shadow-sm transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"
+              type="button"
+              aria-expanded={menuOpen}
+              aria-controls="mobile-signal-menu"
+              onClick={() => setMenuOpen(true)}
+            >
+              <Menu className="h-5 w-5" strokeWidth={2.4} />
+              <span className="truncate">{activeTabLabel}</span>
+            </button>
+          </div>
 
           {tags.length ? (
             <section className="my-3 motion-safe:animate-[snapshotFadeIn_360ms_ease-out]" aria-label="Фильтры по тегам">
@@ -897,6 +928,37 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
           </section>
         </div>
       </section>
+
+      {menuOpen ? (
+        <div className="fixed inset-0 z-50 lg:hidden" role="presentation">
+          <button
+            className="absolute inset-0 cursor-default bg-slate-950/45 backdrop-blur-sm"
+            type="button"
+            aria-label="Закрыть меню"
+            onClick={() => setMenuOpen(false)}
+          />
+          <aside
+            id="mobile-signal-menu"
+            className="relative grid h-full w-[min(86vw,340px)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden border-r border-slate-200 bg-white shadow-2xl motion-safe:animate-[snapshotDrawerIn_220ms_ease-out]"
+            aria-label="Разделы сигналов"
+          >
+            <header className="flex items-center justify-between gap-3 border-b border-slate-200 bg-[#f9f6ed] p-3">
+              <span className="text-base font-black text-slate-950">Карта сигналов</span>
+              <button
+                className="grid h-10 w-10 cursor-pointer place-items-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-rose-50 hover:text-rose-700"
+                type="button"
+                aria-label="Закрыть меню"
+                onClick={() => setMenuOpen(false)}
+              >
+                <X size={20} />
+              </button>
+            </header>
+            <div className="min-h-0 overflow-auto p-3">
+              {signalMenu("grid grid-cols-1 gap-1.5", false)}
+            </div>
+          </aside>
+        </div>
+      ) : null}
 
 	      {activeSignal ? (
 	        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-3 backdrop-blur-sm" role="presentation" onClick={closeSignal}>
