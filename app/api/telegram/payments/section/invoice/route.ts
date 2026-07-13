@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../../../../../../src/db/prisma";
+import { signalKindForSectionId } from "../../../../../../src/snapshots/signalSections";
+import { isSourceSignalKindPaid } from "../../../../../../src/sources/paidSignalKinds";
 import { createPaidSectionInvoiceLink } from "../../../../../../src/telegram/starsInvoices";
 import { findPaidSourceAccess } from "../../../../../../src/telegram/sourceAccess";
 import {
@@ -46,6 +48,24 @@ export async function POST(request: Request) {
 
   if (!sourceId || !sectionId || !isPaidSectionId(sectionId)) {
     return NextResponse.json({ ok: false, error: "Source and valid section are required" }, { status: 400 });
+  }
+
+  const source = await prisma.source.findUnique({
+    where: {
+      id: sourceId,
+    },
+    select: {
+      paidSignalKinds: true,
+    },
+  });
+  const signalKind = signalKindForSectionId(sectionId);
+
+  if (!source || !signalKind) {
+    return NextResponse.json({ ok: false, error: "Source not found" }, { status: 404 });
+  }
+
+  if (!isSourceSignalKindPaid(source, signalKind)) {
+    return NextResponse.json({ ok: true, access: true, mode: "free" });
   }
 
   const user = requireTelegramUser(request, initData, token);

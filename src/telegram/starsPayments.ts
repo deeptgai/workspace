@@ -1,6 +1,9 @@
-export const PAID_SECTION_IDS = ["people", "tools"] as const;
+import type { ChannelSnapshotSectionId } from "../snapshots/sourceSnapshotSchema.ts";
+import { isSignalSectionId, signalSectionForSectionId, signalSectionIds } from "../snapshots/signalSections.ts";
 
-export type PaidSectionId = typeof PAID_SECTION_IDS[number];
+export const PAID_SECTION_IDS = signalSectionIds;
+
+export type PaidSectionId = ChannelSnapshotSectionId;
 
 export type PaidSectionInvoicePayload = {
   product: string;
@@ -10,38 +13,24 @@ export type PaidSectionInvoicePayload = {
   checkoutId?: string;
 };
 
-const paidSectionConfig: Record<PaidSectionId, { product: string; title: string; envPrice: string; defaultPrice: number }> = {
-  people: {
-    product: "people-section",
-    title: "Раздел Люди",
-    envPrice: "TELEGRAM_PEOPLE_SECTION_PRICE_STARS",
-    defaultPrice: 1,
-  },
-  tools: {
-    product: "tools-section",
-    title: "Раздел Инструменты",
-    envPrice: "TELEGRAM_TOOLS_SECTION_PRICE_STARS",
-    defaultPrice: 1,
-  },
-};
-
 export function isPaidSectionId(value: string): value is PaidSectionId {
-  return PAID_SECTION_IDS.includes(value as PaidSectionId);
+  return isSignalSectionId(value);
 }
 
 export function paidSectionProduct(sectionId: PaidSectionId) {
-  return paidSectionConfig[sectionId].product;
+  return `${sectionId}-section`;
 }
 
 export function paidSectionTitle(sectionId: PaidSectionId) {
-  return paidSectionConfig[sectionId].title;
+  return signalSectionForSectionId(sectionId)?.title ?? "Раздел";
 }
 
 export function paidSectionPriceStars(sectionId: PaidSectionId) {
-  const config = paidSectionConfig[sectionId];
-  const value = Number(process.env[config.envPrice] || config.defaultPrice);
+  const envName = `TELEGRAM_${sectionId.toUpperCase()}_SECTION_PRICE_STARS`;
+  const defaultPrice = 1;
+  const value = Number(process.env[envName] || defaultPrice);
 
-  return Number.isFinite(value) && value > 0 ? value : config.defaultPrice;
+  return Number.isFinite(value) && value > 0 ? value : defaultPrice;
 }
 
 export function makePaidSectionInvoicePayload(input: {

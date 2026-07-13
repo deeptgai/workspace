@@ -21,7 +21,6 @@ import {
   visibleSignalTags,
 } from "./snapshotSignalPresentation";
 import {
-  paidTabs,
   type EvidenceMessage,
   type PaidTab,
   type SnapshotTabsProps,
@@ -51,7 +50,7 @@ function mergeSignalsById(signals: SnapshotSignal[]) {
   return [...merged.values()];
 }
 
-export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, initialActiveSignalId, initialTelegramUser, basePath, lockedPaidTabCounts, signalFeed }: SnapshotTabsProps) {
+export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, initialActiveSignalId, initialTelegramUser, basePath, lockedPaidTabCounts, paidSignalKinds = [], signalFeed }: SnapshotTabsProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const snapshotPath = basePath ?? pathname;
@@ -81,6 +80,8 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
   const [paywallSignal, setPaywallSignal] = useState<SnapshotSignal | null>(null);
   const getTelegramWebApp = useTelegramWebApp();
   const telegramRuntime = useTelegramRuntime(getTelegramWebApp);
+  const paidTabs = useMemo(() => paidSignalKinds, [paidSignalKinds]);
+  const paidTabSet = useMemo(() => new Set(paidTabs), [paidTabs]);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
   const {
     activeTab,
@@ -112,6 +113,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
   } = usePaidSections({
     getTelegramWebApp,
     initialTelegramUser,
+    paidSignalKinds: paidTabs,
     selectTabUnlocked,
     snapshot,
     snapshotPath,
@@ -119,8 +121,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
   const loadedSignals = useMemo(
     () => mergeSignalsById([
       ...publicSignals,
-      ...(paidTabSignals.person ?? []),
-      ...(paidTabSignals.tool ?? []),
+      ...Object.values(paidTabSignals).flat(),
     ]),
     [paidTabSignals, publicSignals],
   );
@@ -139,13 +140,13 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
   );
   const accessibleSignals = useMemo(
     () => signals.filter((signal) => {
-      if (!paidTabs.has(signal.kind)) {
+      if (!paidTabSet.has(signal.kind)) {
         return true;
       }
 
       return paidTabAccess[signal.kind as PaidTab] === "unlocked";
     }),
-    [paidTabAccess, signals],
+    [paidTabAccess, paidTabSet, signals],
   );
   const listTabSignals = useMemo(
     () => {
@@ -174,7 +175,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
     signals: accessibleSignalsForRoute,
     snapshotPath,
   });
-  const contentActiveTabIsLockedPaid = paidTabs.has(contentActiveTab as SnapshotSignalKind) &&
+  const contentActiveTabIsLockedPaid = paidTabSet.has(contentActiveTab as SnapshotSignalKind) &&
     paidTabAccess[contentActiveTab as PaidTab] !== "unlocked";
   const {
     commitTimelineStart,
@@ -235,15 +236,15 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
     return byTag;
   });
   const isSignalLocked = useCallback((signal: SnapshotSignal) => (
-    paidTabs.has(signal.kind) && paidTabAccess[signal.kind as PaidTab] !== "unlocked"
-  ), [paidTabAccess]);
+    paidTabSet.has(signal.kind) && paidTabAccess[signal.kind as PaidTab] !== "unlocked"
+  ), [paidTabAccess, paidTabSet]);
   const openLockedSignal = useCallback((signal: SnapshotSignal) => {
-    if (!paidTabs.has(signal.kind)) {
+    if (!paidTabSet.has(signal.kind)) {
       return;
     }
 
     setPaywallSignal(signal);
-  }, []);
+  }, [paidTabSet]);
   useEffect(() => {
     if (selectedTag && !tags.some((item) => item.tag === selectedTag)) {
       clearSelectedTag();
@@ -273,17 +274,19 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
     feedEnabled,
     feedRefreshing,
     lockedPaidTabCounts,
+    paidTabs,
     signals,
     timeFilteredAccessibleSignals,
   });
   const refreshPaidTabAccess = usePaidTabAccessRefresh({
     activeTab,
     checkPaidTabAccess,
+    paidTabs,
     paidTabAccess,
     sectionCount,
     setPaidAccess,
   });
-  const activePaidTab = paidTabs.has(activeTab as SnapshotSignalKind) && paidTabAccess[activeTab as PaidTab] !== "unlocked"
+  const activePaidTab = paidTabSet.has(activeTab as SnapshotSignalKind) && paidTabAccess[activeTab as PaidTab] !== "unlocked"
     ? activeTab as PaidTab
     : null;
   const activePaidTabAccess = activePaidTab ? paidTabAccess[activePaidTab] : null;
@@ -315,7 +318,7 @@ export function SnapshotTabs({ snapshot, evidenceMessages, people, actorname, in
 
     openPaidTabPaywall(activePaidTab);
   };
-  const paywallTab = paywallSignal && paidTabs.has(paywallSignal.kind)
+  const paywallTab = paywallSignal && paidTabSet.has(paywallSignal.kind)
     ? paywallSignal.kind as PaidTab
     : null;
   useEffect(() => {

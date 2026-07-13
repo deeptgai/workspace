@@ -8,18 +8,19 @@ datasource db {
 }
 
 model Source {
-  id            String    @id @default(cuid())
-  provider      String
-  externalId    String
-  type          String
-  title         String
-  username      String?
-  url           String?
-  audienceCount Int?
-  metadata      Json?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  lastImportAt  DateTime?
+  id              String    @id @default(cuid())
+  provider        String
+  externalId      String
+  type            String
+  title           String
+  username        String?
+  url             String?
+  audienceCount   Int?
+  metadata        Json?
+  paidSignalKinds String[]  @default([])
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  lastImportAt    DateTime?
 
   items        ContentItem[]
   snapshots    SourceSnapshot[]

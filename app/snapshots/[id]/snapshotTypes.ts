@@ -1,4 +1,5 @@
 import type { ChannelSnapshotDocument, SnapshotSignalKind } from "../../../src/snapshots/sourceSnapshotSchema";
+import { sectionIdForSignalKind, signalKinds } from "../../../src/snapshots/signalSections";
 import type { TelegramAuthUser } from "./TelegramAuthBadge";
 import type { SnapshotPerson } from "./snapshotSignalPresentation";
 
@@ -21,14 +22,13 @@ export type EvidenceMessage = {
   } | null;
 };
 
-export type PaidTab = Extract<SnapshotSignalKind, "person" | "tool">;
+export type PaidTab = SnapshotSignalKind;
 export type PaidTabAccess = "checking" | "browser" | "locked" | "unlocked" | "paying" | "error";
 
-export const paidTabs = new Set<SnapshotSignalKind>(["person", "tool"]);
-export const paidTabSectionIds: Record<PaidTab, "people" | "tools"> = {
-  person: "people",
-  tool: "tools",
-};
+export const paidTabs = new Set<SnapshotSignalKind>(signalKinds);
+export const paidTabSectionIds = Object.fromEntries(
+  signalKinds.map((kind) => [kind, sectionIdForSignalKind(kind)]),
+) as Record<PaidTab, NonNullable<ReturnType<typeof sectionIdForSignalKind>>>;
 
 export type SignalFeedConfig = {
   slug: string;
@@ -43,6 +43,7 @@ export type SnapshotTabsProps = {
   initialActiveSignalId?: string | null;
   initialTelegramUser?: TelegramAuthUser | null;
   basePath?: string;
-  lockedPaidTabCounts?: Partial<Record<PaidTab, number>>;
+  lockedPaidTabCounts?: Partial<Record<SnapshotSignalKind, number>>;
+  paidSignalKinds?: SnapshotSignalKind[];
   signalFeed?: SignalFeedConfig;
 };

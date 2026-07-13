@@ -300,6 +300,10 @@ select {
   box-shadow: 0 18px 60px rgba(15, 23, 42, 0.22);
 }
 
+.paid-sections-modal {
+  width: min(680px, 100%);
+}
+
 .modal-header {
   display: flex;
   align-items: flex-start;
@@ -332,6 +336,13 @@ select {
 
 .modal-form .input {
   flex: 1 1 260px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
 }
 
 .icon-button {
@@ -449,6 +460,59 @@ select {
   font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.paid-sections-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.paid-sections-summary {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fbfcfa;
+  color: var(--muted);
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.paid-section-option {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.paid-section-option:hover {
+  border-color: #b8c8c0;
+  background: #f5faf7;
+}
+
+.paid-section-option input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+}
+
+.paid-section-option span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.paid-section-option strong {
+  font-size: 13px;
 }
 
 .button {

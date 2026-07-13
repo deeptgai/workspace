@@ -1,9 +1,9 @@
 import { prisma } from "../../src/db/prisma";
 import type { SnapshotSignal, SnapshotSignalKind } from "../../src/snapshots/sourceSnapshotSchema";
+import { sourcePaidSignalKinds } from "../../src/sources/paidSignalKinds";
 import { sourceSlug } from "../sourceSlug";
 import type { getSnapshotEvidenceMessages } from "../snapshots/snapshotViewData";
 
-const paidSignalKinds = new Set<SnapshotSignalKind>(["person", "tool"]);
 const defaultLimit = 30;
 const maxLimit = 60;
 
@@ -27,6 +27,7 @@ export async function findSignalFeedSource(slug: string) {
       id: true,
       title: true,
       username: true,
+      paidSignalKinds: true,
     },
   });
 
@@ -74,12 +75,12 @@ function visibleSignalTags(signal: SnapshotSignal) {
   return (signal.tags ?? []).filter((tag) => tag.trim());
 }
 
-function isPaidSignal(signal: SnapshotSignal) {
+function isPaidSignal(signal: SnapshotSignal, paidSignalKinds: Set<SnapshotSignalKind>) {
   return paidSignalKinds.has(signal.kind);
 }
 
-function lockedSignalPreview(signal: SnapshotSignal): SnapshotSignal {
-  if (!isPaidSignal(signal)) {
+function lockedSignalPreview(signal: SnapshotSignal, paidSignalKinds: Set<SnapshotSignalKind>): SnapshotSignal {
+  if (!isPaidSignal(signal, paidSignalKinds)) {
     return signal;
   }
 
@@ -203,6 +204,7 @@ export async function queryPublicSignalFeed(input: SignalFeedQuery) {
   const cursor = Math.max(0, Number(input.cursor ?? 0) || 0);
   const limit = Math.min(Math.max(Number(input.limit ?? defaultLimit) || defaultLimit, 1), maxLimit);
   const selectedTag = input.tag?.trim() || "";
+  const paidSignalKindSet = new Set(sourcePaidSignalKinds(source));
   const allSignals = (await readSourceSignalsForFeed(source.id)).map(sourceSignalRowToSnapshotSignal);
   const baseCountsByKind = allSignals.reduce<Partial<Record<SnapshotSignalKind | "all", number>>>((counts, signal) => {
     counts[signal.kind] = (counts[signal.kind] ?? 0) + 1;
@@ -241,11 +243,13 @@ export async function queryPublicSignalFeed(input: SignalFeedQuery) {
     counts[signal.kind] = (counts[signal.kind] ?? 0) + 1;
     return counts;
   }, {});
-  const timeFilteredPublicSignals = timeFilteredAllSignals.filter((signal) => !isPaidSignal(signal));
+  const timeFilteredPublicSignals = timeFilteredAllSignals.filter((signal) => !isPaidSignal(signal, paidSignalKindSet));
   countsByKind.all = timeFilteredAllSignals.length;
   const sectionSignals = section === "all"
-    ? timeFilteredAllSignals.map(lockedSignalPreview)
-    : timeFilteredPublicSignals.filter((signal) => signal.kind === section);
+    ? timeFilteredAllSignals.map((signal) => lockedSignalPreview(signal, paidSignalKindSet))
+    : paidSignalKindSet.has(section as SnapshotSignalKind)
+      ? timeFilteredAllSignals.filter((signal) => signal.kind === section).map((signal) => lockedSignalPreview(signal, paidSignalKindSet))
+      : timeFilteredPublicSignals.filter((signal) => signal.kind === section);
   const tagCounts = new Map<string, number>();
 
   for (const signal of sectionSignals) {
@@ -265,7 +269,7 @@ export async function queryPublicSignalFeed(input: SignalFeedQuery) {
   const nextCursor = cursor + pageSignals.length;
   const evidenceMessages = await evidenceMessagesForSignals(
     source.id,
-    pageSignals.filter((signal) => !isPaidSignal(signal)),
+    pageSignals.filter((signal) => !isPaidSignal(signal, paidSignalKindSet)),
   );
 
   return {

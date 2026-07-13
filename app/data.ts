@@ -362,6 +362,7 @@ async function findSourceBySlug(slug: string) {
       url: true,
       audienceCount: true,
       metadata: true,
+      paidSignalKinds: true,
       createdAt: true,
       updatedAt: true,
       lastImportAt: true,

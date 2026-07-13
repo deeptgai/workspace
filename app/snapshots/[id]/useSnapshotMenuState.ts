@@ -3,14 +3,15 @@
 import { useCallback, useMemo } from "react";
 import type { SnapshotSignal, SnapshotSignalKind } from "../../../src/snapshots/sourceSnapshotSchema";
 import { signalTabs } from "./snapshotSignalPresentation";
-import { paidTabs, type PaidTab } from "./snapshotTypes";
+import type { PaidTab } from "./snapshotTypes";
 
 type UseSnapshotMenuStateArgs = {
   activeTab: SnapshotSignalKind | "all";
   feedCountsByKind: Partial<Record<SnapshotSignalKind | "all", number>>;
   feedEnabled: boolean;
   feedRefreshing: boolean;
-  lockedPaidTabCounts?: Partial<Record<PaidTab, number>>;
+  lockedPaidTabCounts?: Partial<Record<SnapshotSignalKind, number>>;
+  paidTabs: PaidTab[];
   signals: SnapshotSignal[];
   timeFilteredAccessibleSignals: SnapshotSignal[];
 };
@@ -21,9 +22,11 @@ export function useSnapshotMenuState({
   feedEnabled,
   feedRefreshing,
   lockedPaidTabCounts,
+  paidTabs,
   signals,
   timeFilteredAccessibleSignals,
 }: UseSnapshotMenuStateArgs) {
+  const paidTabSet = useMemo(() => new Set<SnapshotSignalKind>(paidTabs), [paidTabs]);
   const sectionCount = useCallback((tabId: SnapshotSignalKind | "all") => {
     if (feedEnabled) {
       return feedCountsByKind[tabId] ?? 0;
@@ -33,7 +36,7 @@ export function useSnapshotMenuState({
       return timeFilteredAccessibleSignals.length;
     }
 
-    if (paidTabs.has(tabId)) {
+    if (paidTabSet.has(tabId)) {
       const paidTab = tabId as PaidTab;
       const loadedPaidSignals = signals.filter((signal) => signal.kind === paidTab);
 
@@ -45,7 +48,7 @@ export function useSnapshotMenuState({
     }
 
     return timeFilteredAccessibleSignals.filter((signal) => signal.kind === tabId).length;
-  }, [feedCountsByKind, feedEnabled, lockedPaidTabCounts, signals, timeFilteredAccessibleSignals]);
+  }, [feedCountsByKind, feedEnabled, lockedPaidTabCounts, paidTabSet, signals, timeFilteredAccessibleSignals]);
   const visibleSignalTabs = useMemo(() => (
     signalTabs
       .map((tab) => ({

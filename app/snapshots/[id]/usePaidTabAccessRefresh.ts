@@ -2,23 +2,25 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import type { SnapshotSignalKind } from "../../../src/snapshots/sourceSnapshotSchema";
-import { paidTabs, type PaidTab, type PaidTabAccess } from "./snapshotTypes";
+import { paidTabs as paidCapableTabs, type PaidTab, type PaidTabAccess } from "./snapshotTypes";
 
 type UsePaidTabAccessRefreshArgs = {
   activeTab: SnapshotSignalKind | "all";
   checkPaidTabAccess: (tab: PaidTab) => Promise<boolean>;
+  paidTabs: PaidTab[];
   paidTabAccess: Record<PaidTab, PaidTabAccess>;
   sectionCount: (tab: SnapshotSignalKind | "all") => number;
   setPaidAccess: (tab: PaidTab, access: PaidTabAccess) => void;
 };
 
 function isPaidTab(tab: SnapshotSignalKind | "all"): tab is PaidTab {
-  return tab === "person" || tab === "tool";
+  return tab !== "all" && paidCapableTabs.has(tab);
 }
 
 export function usePaidTabAccessRefresh({
   activeTab,
   checkPaidTabAccess,
+  paidTabs,
   paidTabAccess,
   sectionCount,
   setPaidAccess,
@@ -55,16 +57,18 @@ export function usePaidTabAccessRefresh({
 
   useEffect(() => {
     if (isPaidTab(activeTab)) {
-      refreshPaidTabAccess(activeTab);
+      if (paidTabs.includes(activeTab)) {
+        refreshPaidTabAccess(activeTab);
+      }
       return;
     }
 
     if (activeTab === "all") {
       for (const paidTab of paidTabs) {
-        refreshPaidTabAccess(paidTab as PaidTab);
+        refreshPaidTabAccess(paidTab);
       }
     }
-  }, [activeTab, refreshPaidTabAccess]);
+  }, [activeTab, paidTabs, refreshPaidTabAccess]);
 
   useEffect(() => {
     const refreshVisiblePaidTab = () => {

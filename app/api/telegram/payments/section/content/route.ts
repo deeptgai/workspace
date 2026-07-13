@@ -3,11 +3,12 @@ import { getSourceSignalMap } from "../../../../../data";
 import { getSnapshotEvidenceMessages } from "../../../../../snapshots/snapshotViewData";
 import { evidenceForSnapshot } from "../../../../../s/publicSnapshot";
 import { prisma } from "../../../../../../src/db/prisma";
+import { signalKindForSectionId } from "../../../../../../src/snapshots/signalSections";
+import { isSourceSignalKindPaid } from "../../../../../../src/sources/paidSignalKinds";
 import { findPaidSourceAccess } from "../../../../../../src/telegram/sourceAccess";
-import { isPaidSectionId, type PaidSectionId } from "../../../../../../src/telegram/starsPayments";
+import { isPaidSectionId } from "../../../../../../src/telegram/starsPayments";
 import { getTelegramSessionFromCookieHeader } from "../../../../../../src/telegram/webAppSession";
 import { telegramInitDataMaxAgeSeconds, verifyTelegramWebAppInitData } from "../../../../../../src/telegram/webAppAuth";
-import type { SnapshotSignalKind } from "../../../../../../src/snapshots/sourceSnapshotSchema";
 import type { TelegramWebAppUser } from "../../../../../../src/telegram/webAppAuth";
 
 export const dynamic = "force-dynamic";
@@ -17,11 +18,6 @@ type SectionContentRequest = {
   initData?: string;
   slug?: string;
   sectionId?: string;
-};
-
-const sectionSignalKind: Record<PaidSectionId, SnapshotSignalKind> = {
-  people: "person",
-  tools: "tool",
 };
 
 function requireTelegramUser(request: Request, initData: string | undefined, token: string): TelegramWebAppUser | null {
@@ -49,28 +45,35 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "Telegram auth, slug and valid section are required" }, { status: 401 });
   }
 
-  const user = requireTelegramUser(request, initData, token);
-
-  if (!user) {
-    return NextResponse.json({ ok: false, error: "Telegram auth is required" }, { status: 401 });
-  }
-
   const sourceMap = await getSourceSignalMap(slug);
 
   if (!sourceMap) {
     return NextResponse.json({ ok: false, error: "Source not found" }, { status: 404 });
   }
 
-  const purchase = await findPaidSourceAccess(prisma, {
-    telegramId: BigInt(user.id),
-    sourceId: sourceMap.sourceId,
-  });
+  const kind = signalKindForSectionId(sectionId);
 
-  if (!purchase) {
-    return NextResponse.json({ ok: false, error: "Paid access is required" }, { status: 403 });
+  if (!kind) {
+    return NextResponse.json({ ok: false, error: "Unknown section" }, { status: 400 });
   }
 
-  const kind = sectionSignalKind[sectionId];
+  if (isSourceSignalKindPaid(sourceMap.chat, kind)) {
+    const user = requireTelegramUser(request, initData, token);
+
+    if (!user) {
+      return NextResponse.json({ ok: false, error: "Telegram auth is required" }, { status: 401 });
+    }
+
+    const purchase = await findPaidSourceAccess(prisma, {
+      telegramId: BigInt(user.id),
+      sourceId: sourceMap.sourceId,
+    });
+
+    if (!purchase) {
+      return NextResponse.json({ ok: false, error: "Paid access is required" }, { status: 403 });
+    }
+  }
+
   const signals = sourceMap.document.signals.filter((signal) => signal.kind === kind);
   const sectionDocument = {
     ...sourceMap.document,

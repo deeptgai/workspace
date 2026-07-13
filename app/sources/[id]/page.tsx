@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DatabaseZap, FileDown, FilePlus2, RefreshCw } from "lucide-react";
+import { sourcePaidSignalKinds } from "../../../src/sources/paidSignalKinds";
 import { checkUpdatesAction, createSnapshotAction, fullImportAction, retrySnapshotSectionAction } from "../../actions";
 import { AppShell, ItemsBadge, SnapshotsBadge, Stat, TypeBadge } from "../../components";
 import { compactText, formatDate, formatDateTime, formatNumber, getSourceDetail } from "../../data";
 import { sourceSlug } from "../../sourceSlug";
+import { PaidSectionsModal } from "./PaidSectionsModal";
 import { SnapshotAutoRefresh } from "./SnapshotAutoRefresh";
 
 export const dynamic = "force-dynamic";
@@ -35,10 +37,10 @@ export default async function SourcePage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ snapshot?: string; import?: string }>;
+  searchParams: Promise<{ snapshot?: string; import?: string; paid?: string }>;
 }) {
   const { id } = await params;
-  const { snapshot, import: importStatus } = await searchParams;
+  const { snapshot, import: importStatus, paid } = await searchParams;
   const detail = await getSourceDetail(id);
 
   if (!detail) {
@@ -47,6 +49,7 @@ export default async function SourcePage({
 
   const { chat, aggregate, embeddingCount, commentCount, commentUserCount } = detail;
   const hasActiveSnapshot = chat.snapshots.some((item) => item.status === "pending" || item.status === "running");
+  const paidSignalKinds = sourcePaidSignalKinds(chat);
 
   return (
     <AppShell activeSourceId={chat.id}>
@@ -60,6 +63,7 @@ export default async function SourcePage({
           <TypeBadge type={chat.type} />
           <ItemsBadge count={chat._count.items} />
           <SnapshotsBadge count={chat._count.snapshots} />
+          <PaidSectionsModal sourceId={chat.id} paidSignalKinds={paidSignalKinds} />
           <a className="button" href={`/sources/${chat.id}/export`}>
             <FileDown size={15} />
             Export MD
@@ -97,6 +101,9 @@ export default async function SourcePage({
       ) : null}
       {importStatus === "full_queued" ? (
         <div className="notice">Full import queued. Existing items and snapshots were cleared for this source.</div>
+      ) : null}
+      {paid === "updated" ? (
+        <div className="notice">Paid section settings saved.</div>
       ) : null}
 
       <div className="grid">

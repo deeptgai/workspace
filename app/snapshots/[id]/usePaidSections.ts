@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import type { ChannelSnapshotDocument, SnapshotSignal, SnapshotSignalKind } from "../../../src/snapshots/sourceSnapshotSchema";
+import { signalKinds } from "../../../src/snapshots/signalSections";
 import type { TelegramAuthUser, TelegramWebApp } from "./TelegramAuthBadge";
 import {
   paidTabSectionIds,
@@ -13,6 +14,7 @@ import {
 type UsePaidSectionsArgs = {
   getTelegramWebApp: () => Promise<TelegramWebApp | null>;
   initialTelegramUser?: TelegramAuthUser | null;
+  paidSignalKinds: SnapshotSignalKind[];
   selectTabUnlocked: (tab: SnapshotSignalKind | "all") => void;
   snapshot: ChannelSnapshotDocument;
   snapshotPath: string;
@@ -28,19 +30,28 @@ function mergeEvidenceMessages(current: EvidenceMessage[], incoming: EvidenceMes
   return [...messagesById.values()];
 }
 
+function initialPaidTabAccess(paidSignalKinds: SnapshotSignalKind[], paidAccess: PaidTabAccess, freeAccess: PaidTabAccess) {
+  const paidKinds = new Set(paidSignalKinds);
+
+  return Object.fromEntries(signalKinds.map((kind) => [
+    kind,
+    paidKinds.has(kind) ? paidAccess : freeAccess,
+  ])) as Record<PaidTab, PaidTabAccess>;
+}
+
 export function usePaidSections({
   getTelegramWebApp,
   initialTelegramUser,
+  paidSignalKinds,
   selectTabUnlocked,
   snapshot,
   snapshotPath,
 }: UsePaidSectionsArgs) {
   const [paidTabSignals, setPaidTabSignals] = useState<Partial<Record<PaidTab, SnapshotSignal[]>>>({});
   const [paidEvidenceMessages, setPaidEvidenceMessages] = useState<EvidenceMessage[]>([]);
-  const [paidTabAccess, setPaidTabAccess] = useState<Record<PaidTab, PaidTabAccess>>(() => ({
-    person: initialTelegramUser ? "checking" : "browser",
-    tool: initialTelegramUser ? "checking" : "browser",
-  }));
+  const [paidTabAccess, setPaidTabAccess] = useState<Record<PaidTab, PaidTabAccess>>(() => (
+    initialPaidTabAccess(paidSignalKinds, initialTelegramUser ? "checking" : "browser", "unlocked")
+  ));
   const [paymentMessage, setPaymentMessage] = useState("");
   const paidContentSlug = snapshotPath.startsWith("/s/") ? snapshotPath.slice(3).split("/")[0] : "";
   const setPaidAccess = useCallback((tab: PaidTab, access: PaidTabAccess) => {

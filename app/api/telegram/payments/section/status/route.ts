@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "../../../../../../src/db/prisma";
+import { signalKindForSectionId } from "../../../../../../src/snapshots/signalSections";
+import { isSourceSignalKindPaid } from "../../../../../../src/sources/paidSignalKinds";
 import { findPaidSourceAccess } from "../../../../../../src/telegram/sourceAccess";
 import { isPaidSectionId } from "../../../../../../src/telegram/starsPayments";
 import { getTelegramSessionFromCookieHeader } from "../../../../../../src/telegram/webAppSession";
@@ -36,8 +38,30 @@ export async function POST(request: Request) {
   const sourceId = body?.sourceId?.trim();
   const sectionId = body?.sectionId?.trim() || "people";
 
-  if (!user || !sourceId || !sectionId || !isPaidSectionId(sectionId)) {
+  if (!sourceId || !sectionId || !isPaidSectionId(sectionId)) {
     return NextResponse.json({ ok: true, access: false, mode: user ? "telegram" : "browser" });
+  }
+
+  const source = await prisma.source.findUnique({
+    where: {
+      id: sourceId,
+    },
+    select: {
+      paidSignalKinds: true,
+    },
+  });
+  const signalKind = signalKindForSectionId(sectionId);
+
+  if (!source || !signalKind) {
+    return NextResponse.json({ ok: true, access: false, mode: user ? "telegram" : "browser" });
+  }
+
+  if (!isSourceSignalKindPaid(source, signalKind)) {
+    return NextResponse.json({ ok: true, access: true, mode: "free" });
+  }
+
+  if (!user) {
+    return NextResponse.json({ ok: true, access: false, mode: "browser" });
   }
 
   const purchase = await findPaidSourceAccess(prisma, {

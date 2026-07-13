@@ -1,20 +1,19 @@
 import type { ChannelSnapshotDocument, SnapshotSignalKind } from "../../src/snapshots/sourceSnapshotSchema";
 import type { getSnapshotEvidenceMessages } from "../snapshots/snapshotViewData";
 
-const paidSignalKinds = new Set<SnapshotSignalKind>(["person", "tool"]);
+export function publicSnapshotDocument(document: ChannelSnapshotDocument, paidSignalKinds: SnapshotSignalKind[] = []) {
+  const paidSignalKindSet = new Set(paidSignalKinds);
 
-export function publicSnapshotDocument(document: ChannelSnapshotDocument) {
   return {
     ...document,
-    signals: document.signals.filter((signal) => !paidSignalKinds.has(signal.kind)),
+    signals: document.signals.filter((signal) => !paidSignalKindSet.has(signal.kind)),
   };
 }
 
-export function lockedPaidTabCounts(document: ChannelSnapshotDocument) {
-  return {
-    person: document.signals.filter((signal) => signal.kind === "person").length,
-    tool: document.signals.filter((signal) => signal.kind === "tool").length,
-  };
+export function lockedPaidTabCounts(document: ChannelSnapshotDocument, paidSignalKinds: SnapshotSignalKind[] = []) {
+  return Object.fromEntries(
+    paidSignalKinds.map((kind) => [kind, document.signals.filter((signal) => signal.kind === kind).length]),
+  ) as Partial<Record<SnapshotSignalKind, number>>;
 }
 
 export function evidenceForSnapshot(document: ChannelSnapshotDocument, evidenceMessages: ReturnType<typeof getSnapshotEvidenceMessages>) {

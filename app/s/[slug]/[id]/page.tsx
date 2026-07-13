@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { isChannelSnapshotDocument } from "../../../../src/snapshots/sourceSnapshotSchema";
+import { sourcePaidSignalKinds } from "../../../../src/sources/paidSignalKinds";
 import { TELEGRAM_WEB_APP_SESSION_COOKIE, verifyTelegramSessionToken } from "../../../../src/telegram/webAppSession";
 import { getSnapshot, getSourceSignalMap } from "../../../data";
 import { getSnapshotEvidenceMessages, getSnapshotPeople } from "../../../snapshots/snapshotViewData";
@@ -30,7 +31,8 @@ export async function generateMetadata({ params }: ShortSharedSnapshotPageProps)
   const sourceMap = await getSourceSignalMap(slug);
   const cookieStore = await cookies();
   const telegramSession = verifyTelegramSessionToken(cookieStore.get(TELEGRAM_WEB_APP_SESSION_COOKIE)?.value);
-  const document = isChannelSnapshotDocument(sourceMap?.document) ? publicSnapshotDocument(sourceMap.document) : null;
+  const paidSignalKinds = sourcePaidSignalKinds(sourceMap?.chat);
+  const document = isChannelSnapshotDocument(sourceMap?.document) ? publicSnapshotDocument(sourceMap.document, paidSignalKinds) : null;
   const activeSignal = document?.signals.find((signal) => signal.id === normalizedSignalId);
   const title = activeSignal
     ? `${activeSignal.title} — ${sourceMap?.chat.title}`
@@ -55,7 +57,8 @@ export default async function ShortSharedSnapshotPage({ params }: ShortSharedSna
     notFound();
   }
 
-  const publicDocument = publicSnapshotDocument(sourceMap.document);
+  const paidSignalKinds = sourcePaidSignalKinds(sourceMap.chat);
+  const publicDocument = publicSnapshotDocument(sourceMap.document, paidSignalKinds);
 
   if (!publicDocument.signals.some((signal) => signal.id === normalizedSignalId)) {
     const snapshot = await getSnapshot(id);
@@ -81,7 +84,8 @@ export default async function ShortSharedSnapshotPage({ params }: ShortSharedSna
             initialActiveSignalId={normalizedSignalId}
             initialTelegramUser={telegramSession?.user ?? null}
             basePath={`/s/${slug}`}
-            lockedPaidTabCounts={lockedPaidTabCounts(sourceMap.document)}
+            lockedPaidTabCounts={lockedPaidTabCounts(sourceMap.document, paidSignalKinds)}
+            paidSignalKinds={paidSignalKinds}
           />
           <SnapshotSeoContent snapshot={publicDocument} evidenceMessages={evidenceMessages} activeSignalId={normalizedSignalId} />
         </div>

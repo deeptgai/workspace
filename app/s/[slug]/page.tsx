@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { isChannelSnapshotDocument } from "../../../src/snapshots/sourceSnapshotSchema";
+import { sourcePaidSignalKinds } from "../../../src/sources/paidSignalKinds";
 import { TELEGRAM_WEB_APP_SESSION_COOKIE, verifyTelegramSessionToken } from "../../../src/telegram/webAppSession";
 import { getSourceSignalMap } from "../../data";
 import { getSnapshotEvidenceMessages, getSnapshotPeople } from "../../snapshots/snapshotViewData";
@@ -19,7 +20,8 @@ type SourceSignalMapPageProps = {
 export async function generateMetadata({ params }: SourceSignalMapPageProps): Promise<Metadata> {
   const { slug } = await params;
   const sourceMap = await getSourceSignalMap(slug);
-  const document = isChannelSnapshotDocument(sourceMap?.document) ? publicSnapshotDocument(sourceMap.document) : null;
+  const paidSignalKinds = sourcePaidSignalKinds(sourceMap?.chat);
+  const document = isChannelSnapshotDocument(sourceMap?.document) ? publicSnapshotDocument(sourceMap.document, paidSignalKinds) : null;
   const description = document?.signals.slice(0, 3).map((signal) => signal.title).join(" · ");
   const title = sourceMap ? `${sourceMap.chat.title} — карта сигналов` : "Карта сигналов";
 
@@ -40,7 +42,8 @@ export default async function SourceSignalMapPage({ params }: SourceSignalMapPag
     notFound();
   }
 
-  const publicDocument = publicSnapshotDocument(sourceMap.document);
+  const paidSignalKinds = sourcePaidSignalKinds(sourceMap.chat);
+  const publicDocument = publicSnapshotDocument(sourceMap.document, paidSignalKinds);
   const appDocument = {
     ...publicDocument,
     signals: [],
@@ -58,7 +61,8 @@ export default async function SourceSignalMapPage({ params }: SourceSignalMapPag
             actorname={sourceMap.chat.username}
             initialTelegramUser={telegramSession?.user ?? null}
             basePath={`/s/${slug}`}
-            lockedPaidTabCounts={lockedPaidTabCounts(sourceMap.document)}
+            lockedPaidTabCounts={lockedPaidTabCounts(sourceMap.document, paidSignalKinds)}
+            paidSignalKinds={paidSignalKinds}
             signalFeed={{
               slug,
               limit: 30,

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "../src/db/prisma";
 import { enqueueSourceSnapshotJob } from "../src/queue/snapshotQueue";
+import { normalizePaidSignalKinds } from "../src/sources/paidSignalKinds";
 import { initialSnapshotPipeline } from "../src/snapshots/pipeline";
 
 type TelegramImportJobData = {
@@ -346,4 +347,44 @@ export async function fullImportAction(formData: FormData) {
   revalidatePath(`/sources/${chat.id}`);
 
   redirect(`/sources/${chat.id}?import=full_queued`);
+}
+
+export async function updateSourcePaidSectionsAction(formData: FormData) {
+  const sourceId = String(formData.get("sourceId") ?? "");
+
+  if (!sourceId) {
+    throw new Error("Missing sourceId.");
+  }
+
+  const chat = await prisma.source.findUnique({
+    where: {
+      id: sourceId,
+    },
+    select: {
+      id: true,
+      title: true,
+      username: true,
+    },
+  });
+
+  if (!chat) {
+    throw new Error(`Source not found: ${sourceId}`);
+  }
+
+  const paidSignalKinds = normalizePaidSignalKinds(formData.getAll("paidSignalKind"));
+
+  await prisma.source.update({
+    where: {
+      id: chat.id,
+    },
+    data: {
+      paidSignalKinds,
+    },
+  });
+
+  revalidatePath("/");
+  revalidatePath(`/sources/${chat.id}`);
+  revalidatePath(`/s/${slug(chat.username || chat.title)}`);
+
+  redirect(`/sources/${chat.id}?paid=updated`);
 }
