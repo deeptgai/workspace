@@ -6,7 +6,7 @@ BOT_URL ?= https://bot-local.tgdeep.xyz
 WEB_PORT ?= 3000
 BOT_PORT ?= 8787
 
-.PHONY: help install web bot worker tunnel up health tunnel-check ports db-up db-push typecheck stars-check stars-live
+.PHONY: help install web bot worker tunnel up health tunnel-check ports db-up db-migrate typecheck stars-check stars-live
 
 help:
 	@printf "Targets:\n"
@@ -19,7 +19,7 @@ help:
 	@printf "  make tunnel-check  Validate Cloudflare tunnel ingress config\n"
 	@printf "  make ports         Show listeners on %s and %s\n" "$(WEB_PORT)" "$(BOT_PORT)"
 	@printf "  make db-up         Start local Postgres and Redis\n"
-	@printf "  make db-push       Apply Prisma schema\n"
+	@printf "  make db-migrate    Apply Prisma migrations\n"
 	@printf "  make typecheck     Run TypeScript check\n"
 	@printf "  make stars-check   Print and validate Stars invoice request JSON\n"
 	@printf "  make stars-live    Create a live Telegram Stars invoice link\n"
@@ -66,8 +66,8 @@ ports:
 db-up:
 	docker compose up -d postgres redis
 
-db-push:
-	npm run db:push
+db-migrate:
+	npm run db:deploy
 
 typecheck:
 	npm run typecheck

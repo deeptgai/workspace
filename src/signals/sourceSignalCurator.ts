@@ -122,6 +122,18 @@ function signalText(signal: Pick<SnapshotSignalRow | SourceSignal, "title" | "su
   return [signal.kind, signal.title, signal.summary, signal.canonicalClaim].filter(Boolean).join("\n");
 }
 
+function minDate(...values: Array<Date | null | undefined>) {
+  const dates = values.filter((value): value is Date => Boolean(value));
+
+  return dates.length ? new Date(Math.min(...dates.map((value) => value.getTime()))) : undefined;
+}
+
+function maxDate(...values: Array<Date | null | undefined>) {
+  const dates = values.filter((value): value is Date => Boolean(value));
+
+  return dates.length ? new Date(Math.max(...dates.map((value) => value.getTime()))) : undefined;
+}
+
 async function candidateSourceSignals(prisma: PrismaClient, signal: SnapshotSignalRow) {
   const candidates = await prisma.sourceSignal.findMany({
     where: {
@@ -286,6 +298,18 @@ async function applyDecision(
   }
 
   return prisma.$transaction(async (tx) => {
+    const existingSourceSignal = decision.decision === "merge"
+      ? await tx.sourceSignal.findUnique({
+          where: {
+            id: decision.sourceSignalId,
+          },
+          select: {
+            firstEvidenceAt: true,
+            lastEvidenceAt: true,
+            tags: true,
+          },
+        })
+      : null;
     const sourceSignal = decision.decision === "merge"
       ? await tx.sourceSignal.update({
           where: {
@@ -294,10 +318,11 @@ async function applyDecision(
           data: {
             title: decision.title || snapshotSignal.title,
             summary: decision.summary || snapshotSignal.summary,
-            tags: uniqueTags(jsonStringArray(snapshotSignal.tags), decision.tags) satisfies Prisma.InputJsonValue,
+            tags: uniqueTags(jsonStringArray(existingSourceSignal?.tags), jsonStringArray(snapshotSignal.tags), decision.tags) satisfies Prisma.InputJsonValue,
             confidence: decision.confidence,
             previewImage: snapshotSignal.previewImage ?? undefined,
-            lastEvidenceAt: snapshotSignal.sortAt,
+            firstEvidenceAt: minDate(existingSourceSignal?.firstEvidenceAt, snapshotSignal.sortAt),
+            lastEvidenceAt: maxDate(existingSourceSignal?.lastEvidenceAt, snapshotSignal.sortAt),
           },
         })
       : await tx.sourceSignal.create({

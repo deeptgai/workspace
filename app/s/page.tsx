@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { sourceSlug } from "../sourceSlug";
 import { MiniAppEntryRedirect } from "./MiniAppEntryRedirect";
 
 export const dynamic = "force-dynamic";
@@ -20,11 +21,7 @@ function firstParam(value: string | string[] | null | undefined) {
 function normalizeSlug(value: string | string[] | null | undefined): string {
   const rawValue = firstParam(value);
 
-  return (rawValue ?? "")
-    .trim()
-    .replace(/^@/, "")
-    .replace(/[^a-zA-Z0-9_-]/g, "")
-    .slice(0, 80);
+  return rawValue ? sourceSlug(rawValue) : "";
 }
 
 function searchParamsString(params: Record<string, string | string[] | undefined>) {

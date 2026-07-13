@@ -1,7 +1,7 @@
 import { prisma } from "../../src/db/prisma";
 import type { SnapshotSignal, SnapshotSignalKind } from "../../src/snapshots/sourceSnapshotSchema";
 import { sourcePaidSignalKinds } from "../../src/sources/paidSignalKinds";
-import { sourceSlug } from "../sourceSlug";
+import { normalizeSourceSlugParam, sourceSlug } from "../sourceSlug";
 import type { getSnapshotEvidenceMessages } from "../snapshots/snapshotViewData";
 
 const defaultLimit = 30;
@@ -21,7 +21,7 @@ export type SignalFeedQuery = {
 };
 
 export async function findSignalFeedSource(slug: string) {
-  const normalizedSlug = slug.trim().toLowerCase();
+  const normalizedSlug = normalizeSourceSlugParam(slug);
   const sources = await prisma.source.findMany({
     select: {
       id: true,
@@ -32,7 +32,7 @@ export async function findSignalFeedSource(slug: string) {
   });
 
   return sources.find((source) => sourceSlug(source.username || source.title) === normalizedSlug) ??
-    sources.find((source) => source.id === slug) ??
+    sources.find((source) => source.id === slug || source.id === normalizedSlug) ??
     null;
 }
 

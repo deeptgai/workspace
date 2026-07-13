@@ -26,6 +26,7 @@ model Source {
   snapshots    SourceSnapshot[]
   signals      SourceSignal[]
   importStates SourceImportState[]
+  analysisState SourceAnalysisState?
   payments     Payment[]
   accessGrants SourceAccessGrant[]
 
@@ -53,6 +54,27 @@ model SourceImportState {
   @@unique([sourceId, scope])
   @@index([provider])
   @@index([scope])
+}
+
+model SourceAnalysisState {
+  id                           String    @id @default(cuid())
+  sourceId                     String    @unique
+  provider                     String
+  lastAnalyzedContentCreatedAt DateTime?
+  lastAnalyzedPublishedAt      DateTime?
+  lastAnalyzedExternalId       String?
+  lastSnapshotId               String?
+  cursor                       Json?
+  metadata                     Json?
+  completedAt                  DateTime?
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
+
+  source Source @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@index([provider])
+  @@index([lastAnalyzedContentCreatedAt])
+  @@index([lastAnalyzedPublishedAt])
 }
 
 model Actor {

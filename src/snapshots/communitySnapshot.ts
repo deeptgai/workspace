@@ -18,12 +18,22 @@ import {
   type SnapshotItemPriority,
   type SnapshotItemTag,
   type SnapshotEvidenceRef,
+  type SnapshotGeneratedImage,
 } from "./sourceSnapshotSchema.js";
 import { enrichSignalsWithTimeline } from "./signalTimeline.js";
 import { sortSignalsDescending } from "./signalOrdering.js";
 import { replaceSnapshotSignals } from "../signals/snapshotSignals.js";
 import { snapshotSignalsAsDocumentSignals } from "../signals/snapshotSignals.js";
 import { patchSnapshotPipeline } from "./pipeline.js";
+import {
+  contentWhereForAnalysisWindow,
+  nestedContentWhereForAnalysisWindow,
+  planSnapshotAnalysisWindow,
+  readSnapshotAnalysisWindow,
+  snapshotAnalysisWindowFromPipeline,
+  snapshotAnalysisWindowToJson,
+  type SnapshotAnalysisWindow,
+} from "./analysisState.js";
 
 export type GenerateCommunitySnapshotOptions = {
   chat: Source;
@@ -215,6 +225,7 @@ type SnapshotContext = {
   embeddingCount: number;
   oldestMessageDate: Date | null;
   newestMessageDate: Date | null;
+  analysisWindow: SnapshotAnalysisWindow;
 };
 
 const SNAPSHOT_KIND = "channel_structured_snapshot";
@@ -365,6 +376,22 @@ function jsonObject(value: Prisma.JsonValue | null): Prisma.JsonObject {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Prisma.JsonObject
     : {};
+}
+
+function jsonObjectValue<T>(value: unknown): T | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as T : undefined;
+}
+
+function minDate(...values: Array<Date | null | undefined>) {
+  const dates = values.filter((value): value is Date => Boolean(value));
+
+  return dates.length ? new Date(Math.min(...dates.map((value) => value.getTime()))) : null;
+}
+
+function maxDate(...values: Array<Date | null | undefined>) {
+  const dates = values.filter((value): value is Date => Boolean(value));
+
+  return dates.length ? new Date(Math.max(...dates.map((value) => value.getTime()))) : null;
 }
 
 function formatMessageEvidence(messages: SearchMessageResult[]): string {
@@ -1182,13 +1209,39 @@ export async function generateAndStoreSnapshotSummary(
   };
 }
 
-async function buildSnapshotContext(prisma: PrismaClient, chat: Source, embeddingsModel: string): Promise<SnapshotContext> {
+function fullSnapshotAnalysisWindow(sourceId: string): SnapshotAnalysisWindow {
+  return {
+    mode: "initial",
+    sourceId,
+    previousContentCreatedAt: null,
+    previousPublishedAt: null,
+    toContentCreatedAt: null,
+    toPublishedAt: null,
+    overlapPublishedAt: null,
+    newContentCount: 0,
+    contentCount: 0,
+  };
+}
+
+function searchWindowOptions(window: SnapshotAnalysisWindow) {
+  return {
+    createdAtLte: window.toContentCreatedAt,
+    createdAtGt: window.mode === "incremental" ? window.previousContentCreatedAt : null,
+    publishedAtGte: window.mode === "incremental" ? window.overlapPublishedAt : null,
+  };
+}
+
+async function buildSnapshotContext(
+  prisma: PrismaClient,
+  chat: Source,
+  embeddingsModel: string,
+  analysisWindow: SnapshotAnalysisWindow = fullSnapshotAnalysisWindow(chat.id),
+): Promise<SnapshotContext> {
   const peopleMessageKind = chat.type === "group" ? "post" : "comment";
+  const baseWhere = contentWhereForAnalysisWindow(analysisWindow);
   const [aggregate, topMessages, messageCount, embeddingCount, dateRange, topCommenterGroups] = await Promise.all([
     prisma.contentItem.aggregate({
-      where: {
-        sourceId: chat.id,
-      },
+      where: baseWhere,
       _count: {
         _all: true,
       },
@@ -1204,12 +1257,11 @@ async function buildSnapshotContext(prisma: PrismaClient, chat: Source, embeddin
       },
     }),
     prisma.contentItem.findMany({
-      where: {
-        sourceId: chat.id,
+      where: contentWhereForAnalysisWindow(analysisWindow, {
         text: {
           not: null,
         },
-      },
+      }),
       orderBy: {
         engagementScore: "desc",
       },
@@ -1226,22 +1278,16 @@ async function buildSnapshotContext(prisma: PrismaClient, chat: Source, embeddin
       },
     }),
     prisma.contentItem.count({
-      where: {
-        sourceId: chat.id,
-      },
+      where: baseWhere,
     }),
     prisma.contentEmbedding.count({
       where: {
-        item: {
-          sourceId: chat.id,
-        },
+        item: baseWhere,
         model: embeddingsModel,
       },
     }),
     prisma.contentItem.aggregate({
-      where: {
-        sourceId: chat.id,
-      },
+      where: baseWhere,
       _min: {
         publishedAt: true,
       },
@@ -1251,13 +1297,12 @@ async function buildSnapshotContext(prisma: PrismaClient, chat: Source, embeddin
     }),
     prisma.contentItem.groupBy({
       by: ["actorId"],
-      where: {
-        sourceId: chat.id,
+      where: contentWhereForAnalysisWindow(analysisWindow, {
         kind: peopleMessageKind,
         actorId: {
           not: null,
         },
-      },
+      }),
       _count: {
         _all: true,
       },
@@ -1292,14 +1337,13 @@ async function buildSnapshotContext(prisma: PrismaClient, chat: Source, embeddin
           },
         }),
         prisma.contentItem.findMany({
-          where: {
-            sourceId: chat.id,
+          where: contentWhereForAnalysisWindow(analysisWindow, {
             kind: peopleMessageKind,
             actorId: group.actorId,
             text: {
               not: null,
             },
-          },
+          }),
           orderBy: {
             engagementScore: "desc",
           },
@@ -1328,8 +1372,7 @@ async function buildSnapshotContext(prisma: PrismaClient, chat: Source, embeddin
   );
   const postCommentSegments = chat.type === "group"
     ? (await prisma.contentItem.findMany({
-        where: {
-          sourceId: chat.id,
+        where: contentWhereForAnalysisWindow(analysisWindow, {
           kind: "post",
           actorId: {
             not: null,
@@ -1337,7 +1380,7 @@ async function buildSnapshotContext(prisma: PrismaClient, chat: Source, embeddin
           text: {
             not: null,
           },
-        },
+        }),
         orderBy: {
           engagementScore: "desc",
         },
@@ -1368,13 +1411,31 @@ async function buildSnapshotContext(prisma: PrismaClient, chat: Source, embeddin
         where: {
           sourceId: chat.id,
           kind: "post",
-          children: {
-            some: {
-              actorId: {
-                not: null,
+          AND: [
+            {
+              OR: [
+                nestedContentWhereForAnalysisWindow(analysisWindow),
+                {
+                  children: {
+                    some: nestedContentWhereForAnalysisWindow(analysisWindow, {
+                      actorId: {
+                        not: null,
+                      },
+                    }),
+                  },
+                },
+              ],
+            },
+            {
+              children: {
+                some: {
+                  actorId: {
+                    not: null,
+                  },
+                },
               },
             },
-          },
+          ],
         },
         orderBy: [
           {
@@ -1389,11 +1450,11 @@ async function buildSnapshotContext(prisma: PrismaClient, chat: Source, embeddin
           externalId: true,
           text: true,
           children: {
-            where: {
+            where: nestedContentWhereForAnalysisWindow(analysisWindow, {
               actorId: {
                 not: null,
               },
-            },
+            }),
             orderBy: {
               engagementScore: "desc",
             },
@@ -1444,6 +1505,7 @@ async function buildSnapshotContext(prisma: PrismaClient, chat: Source, embeddin
     embeddingCount,
     oldestMessageDate: dateRange._min.publishedAt,
     newestMessageDate: dateRange._max.publishedAt,
+    analysisWindow,
   };
 }
 
@@ -1464,6 +1526,7 @@ async function runSectionAgent(
     sourceId: context.chat.id,
     query: definition.query,
     limit: 10,
+    ...searchWindowOptions(context.analysisWindow),
   });
   logAgent(options, "tool:rag.searchMessages:complete", {
     agent: definition.agent,
@@ -1594,6 +1657,17 @@ export async function generateCommunitySnapshot(
     model: embeddingsConfig.model,
     batchSize: embeddingsConfig.batchSize,
   });
+  const analysisWindow = await planSnapshotAnalysisWindow(prisma, options.chat);
+  logAgent(options, "tool:planSnapshotAnalysisWindow", {
+    mode: analysisWindow.mode,
+    newContentCount: analysisWindow.newContentCount,
+    contentCount: analysisWindow.contentCount,
+    previousContentCreatedAt: analysisWindow.previousContentCreatedAt?.toISOString() ?? null,
+    previousPublishedAt: analysisWindow.previousPublishedAt?.toISOString() ?? null,
+    toContentCreatedAt: analysisWindow.toContentCreatedAt?.toISOString() ?? null,
+    toPublishedAt: analysisWindow.toPublishedAt?.toISOString() ?? null,
+    overlapPublishedAt: analysisWindow.overlapPublishedAt?.toISOString() ?? null,
+  });
 
   const title = `Снимок по каналу: ${options.chat.title}`;
   const snapshotStartedAt = new Date();
@@ -1609,6 +1683,10 @@ export async function generateCommunitySnapshot(
       total: SIGNAL_AGENTS.length,
       completed: 0,
       failed: 0,
+    },
+    analysis: {
+      status: "running",
+      window: snapshotAnalysisWindowToJson(analysisWindow),
     },
     curation: {
       status: "pending",
@@ -1649,13 +1727,64 @@ export async function generateCommunitySnapshot(
           pipeline: initialPipeline,
         },
       });
+  if (analysisWindow.mode === "incremental" && analysisWindow.newContentCount === 0) {
+    const completedAt = new Date();
+
+    await prisma.sourceSnapshot.update({
+      where: {
+        id: snapshot.id,
+      },
+      data: {
+        status: "skipped",
+        completedAt,
+        periodFrom: analysisWindow.previousPublishedAt,
+        periodTo: analysisWindow.previousPublishedAt,
+      },
+    });
+    await patchSnapshotPipeline(prisma, snapshot.id, {
+      status: "skipped",
+      analysis: {
+        status: "skipped",
+        reason: "no_new_content",
+        completedAt: completedAt.toISOString(),
+      },
+      sections: {
+        status: "skipped",
+        total: 0,
+        completed: 0,
+        failed: 0,
+      },
+      curation: {
+        status: "skipped",
+        reason: "no_new_content",
+      },
+      formatting: {
+        status: "skipped",
+      },
+      images: {
+        status: "skipped",
+      },
+    });
+    logAgent(options, "agent:skipped", {
+      snapshotId: snapshot.id,
+      reason: "no_new_content",
+    });
+    await progressAgent(options, 100);
+
+    return {
+      snapshotId: snapshot.id,
+      title: snapshot.title,
+      model: snapshot.model,
+      signalJobs: [],
+    };
+  }
   logAgent(options, "tool:updateSnapshotStatus", {
     snapshotId: snapshot.id,
     status: "running",
   });
 
   logAgent(options, "tool:getSnapshotContext:start");
-  const context = await buildSnapshotContext(prisma, options.chat, embeddingsConfig.model);
+  const context = await buildSnapshotContext(prisma, options.chat, embeddingsConfig.model, analysisWindow);
   logAgent(options, "tool:getSnapshotContext:complete", {
     messages: context.messageCount,
     embeddings: context.embeddingCount,
@@ -1761,7 +1890,9 @@ export async function generateCommunitySnapshotSection(
   });
 
   try {
-    const context = await buildSnapshotContext(prisma, options.chat, embeddingsConfig.model);
+    const analysisWindow = await readSnapshotAnalysisWindow(prisma, snapshotId, options.chat.id)
+      ?? fullSnapshotAnalysisWindow(options.chat.id);
+    const context = await buildSnapshotContext(prisma, options.chat, embeddingsConfig.model, analysisWindow);
     const rawSection = await withTimeout(
       runSectionAgent(
         prisma,
@@ -1899,6 +2030,31 @@ async function completeSnapshotIfReady(
     },
     select: {
       document: true,
+      pipeline: true,
+    },
+  });
+  const previousCompletedSnapshot = await prisma.sourceSnapshot.findFirst({
+    where: {
+      sourceId: chat.id,
+      status: "completed",
+      id: {
+        not: snapshotId,
+      },
+    },
+    orderBy: [
+      {
+        completedAt: "desc",
+      },
+      {
+        createdAt: "desc",
+      },
+    ],
+    select: {
+      periodFrom: true,
+      periodTo: true,
+      summary: true,
+      heroTheme: true,
+      coverImage: true,
     },
   });
   const previousDocument = storedSnapshot?.document &&
@@ -1909,7 +2065,9 @@ async function completeSnapshotIfReady(
     : null;
   const previousTableSignals = await snapshotSignalsAsDocumentSignals(prisma, snapshotId);
   const previousSignalsById = new Map(previousTableSignals.map((signal) => [signal.id, signal]));
-  const context = await buildSnapshotContext(prisma, chat, embeddingsModel);
+  const analysisWindow = snapshotAnalysisWindowFromPipeline(storedSnapshot?.pipeline, chat.id)
+    ?? fullSnapshotAnalysisWindow(chat.id);
+  const context = await buildSnapshotContext(prisma, chat, embeddingsModel, analysisWindow);
   const orderedSections = SECTION_ORDER.flatMap((sectionId) => {
     const section = sections.find((candidate) => candidate.sectionId === sectionId);
     return section ? [sectionFromDbRow(section)] : [];
@@ -1924,12 +2082,23 @@ async function completeSnapshotIfReady(
         }
       : signal;
   }));
-  const [heroTheme, generatedSnapshotSummary] = await Promise.all([
-    generateHeroTheme(aiConfig, context, orderedSections, signals, options),
-    runChannelSummaryAgent(aiConfig, context, orderedSections, signals, options),
-  ]);
+  const previousHeroTheme = jsonObjectValue<ChannelSnapshotHeroTheme>(previousCompletedSnapshot?.heroTheme);
+  const previousCoverImage = jsonObjectValue<SnapshotGeneratedImage>(previousCompletedSnapshot?.coverImage);
+  const [generatedHeroTheme, generatedSnapshotSummary] = analysisWindow.mode === "incremental" && previousCompletedSnapshot
+    ? [previousHeroTheme, previousCompletedSnapshot.summary]
+    : await Promise.all([
+        generateHeroTheme(aiConfig, context, orderedSections, signals, options),
+        runChannelSummaryAgent(aiConfig, context, orderedSections, signals, options),
+      ]);
+  const heroTheme = generatedHeroTheme ?? fallbackHeroTheme(context);
   const title = `Снимок по каналу: ${chat.title}`;
   const snapshotSummary = generatedSnapshotSummary ?? fallbackSnapshotSummary(context, orderedSections);
+  const periodFrom = analysisWindow.mode === "incremental"
+    ? minDate(previousCompletedSnapshot?.periodFrom, context.oldestMessageDate)
+    : context.oldestMessageDate;
+  const periodTo = analysisWindow.mode === "incremental"
+    ? maxDate(previousCompletedSnapshot?.periodTo, context.newestMessageDate)
+    : context.newestMessageDate;
   const snapshotDocument: ChannelSnapshotDocument = {
     schemaVersion: CHANNEL_SNAPSHOT_SCHEMA_VERSION,
     snapshotType: "channel",
@@ -1939,11 +2108,11 @@ async function completeSnapshotIfReady(
     summary: snapshotSummary,
     generatedAt: new Date().toISOString(),
     period: {
-      from: context.oldestMessageDate?.toISOString() ?? null,
-      to: context.newestMessageDate?.toISOString() ?? null,
+      from: periodFrom?.toISOString() ?? null,
+      to: periodTo?.toISOString() ?? null,
     },
     heroTheme,
-    coverImage: previousDocument?.coverImage,
+    coverImage: previousDocument?.coverImage ?? previousCoverImage,
     signals,
   };
 
@@ -1957,14 +2126,15 @@ async function completeSnapshotIfReady(
       status: "completed",
       completedAt: new Date(),
       model: aiConfig.model,
-      periodFrom: context.oldestMessageDate,
-      periodTo: context.newestMessageDate,
+      periodFrom,
+      periodTo,
       summary: snapshotSummary,
       heroTheme: heroTheme satisfies Prisma.InputJsonValue,
-      coverImage: previousDocument?.coverImage ? previousDocument.coverImage satisfies Prisma.InputJsonValue : Prisma.JsonNull,
+      coverImage: snapshotDocument.coverImage ? snapshotDocument.coverImage satisfies Prisma.InputJsonValue : Prisma.JsonNull,
       document: {
         ...snapshotDocumentMetadata,
         embeddingModel: embeddingsModel,
+        analysisWindow: snapshotAnalysisWindowToJson(analysisWindow),
       } satisfies Prisma.InputJsonValue,
     },
   });
@@ -1980,8 +2150,13 @@ async function completeSnapshotIfReady(
       completedAt: new Date().toISOString(),
       signals: persistedSignals.signals,
       evidence: persistedSignals.evidence,
-      periodFrom: context.oldestMessageDate?.toISOString() ?? null,
-      periodTo: context.newestMessageDate?.toISOString() ?? null,
+      periodFrom: periodFrom?.toISOString() ?? null,
+      periodTo: periodTo?.toISOString() ?? null,
+    },
+    analysis: {
+      status: "completed",
+      window: snapshotAnalysisWindowToJson(analysisWindow),
+      completedAt: new Date().toISOString(),
     },
     sections: {
       status: "completed",

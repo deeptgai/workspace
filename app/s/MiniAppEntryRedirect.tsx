@@ -1,17 +1,14 @@
 "use client";
 
 import { useEffect } from "react";
+import { sourceSlug } from "../sourceSlug";
 
 type MiniAppEntryRedirectProps = {
   fallbackSlug: string;
 };
 
 function normalizeSlug(value: string | null | undefined): string {
-  return (value ?? "")
-    .trim()
-    .replace(/^@/, "")
-    .replace(/[^a-zA-Z0-9_-]/g, "")
-    .slice(0, 80);
+  return value ? sourceSlug(value) : "";
 }
 
 export function MiniAppEntryRedirect({ fallbackSlug }: MiniAppEntryRedirectProps) {

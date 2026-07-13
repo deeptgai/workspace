@@ -491,6 +491,11 @@ program
             sourceId: storedChat.id,
           },
         });
+        const analysisStates = await tx.sourceAnalysisState.deleteMany({
+          where: {
+            sourceId: storedChat.id,
+          },
+        });
         const content = await tx.contentItem.deleteMany({
           where: {
             sourceId: storedChat.id,
@@ -505,6 +510,7 @@ program
           sections: sections.count,
           snapshots: snapshots.count,
           importStates: importStates.count,
+          analysisStates: analysisStates.count,
           content: content.count,
         };
       });
@@ -731,6 +737,18 @@ program
         !Array.isArray(latestPipeline.images)
         ? latestPipeline.images as Record<string, unknown>
         : {};
+      const analysisState = await prisma.sourceAnalysisState.findUnique({
+        where: {
+          sourceId: storedChat.id,
+        },
+        select: {
+          lastAnalyzedContentCreatedAt: true,
+          lastAnalyzedPublishedAt: true,
+          lastAnalyzedExternalId: true,
+          lastSnapshotId: true,
+          completedAt: true,
+        },
+      });
 
       console.log("");
       console.log("Source state.");
@@ -756,6 +774,11 @@ program
         latestImagesStatus: latestPipelineImages.status,
         latestPeriodFrom: latestSnapshot?.periodFrom?.toISOString(),
         latestPeriodTo: latestSnapshot?.periodTo?.toISOString(),
+        analysisContentCreatedAt: analysisState?.lastAnalyzedContentCreatedAt?.toISOString(),
+        analysisPublishedAt: analysisState?.lastAnalyzedPublishedAt?.toISOString(),
+        analysisExternalId: analysisState?.lastAnalyzedExternalId,
+        analysisSnapshotId: analysisState?.lastSnapshotId,
+        analysisCompletedAt: analysisState?.completedAt?.toISOString(),
       }]);
     } finally {
       await prisma.$disconnect();

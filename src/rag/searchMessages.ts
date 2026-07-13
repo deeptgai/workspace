@@ -8,6 +8,9 @@ export type SearchMessagesOptions = {
   query: string;
   limit: number;
   minEngagementScore?: number;
+  createdAtGt?: Date | null;
+  createdAtLte?: Date | null;
+  publishedAtGte?: Date | null;
 };
 
 export type SearchMessageResult = {
@@ -30,6 +33,39 @@ export async function searchMessages(
 ): Promise<SearchMessageResult[]> {
   const [queryEmbedding] = await createEmbeddings(config, [options.query]);
   const minEngagementScore = options.minEngagementScore ?? 0;
+  const params: unknown[] = [
+    toPgVectorLiteral(queryEmbedding),
+    options.sourceId,
+    config.model,
+    minEngagementScore,
+  ];
+  const whereClauses = [
+    `m."sourceId" = $2`,
+    `e."model" = $3`,
+    `m."engagementScore" >= $4`,
+  ];
+  const windowClauses: string[] = [];
+
+  if (options.createdAtLte) {
+    params.push(options.createdAtLte);
+    whereClauses.push(`m."createdAt" <= $${params.length}`);
+  }
+
+  if (options.createdAtGt) {
+    params.push(options.createdAtGt);
+    windowClauses.push(`m."createdAt" > $${params.length}`);
+  }
+
+  if (options.publishedAtGte) {
+    params.push(options.publishedAtGte);
+    windowClauses.push(`m."publishedAt" >= $${params.length}`);
+  }
+
+  if (windowClauses.length) {
+    whereClauses.push(`(${windowClauses.join(" or ")})`);
+  }
+
+  params.push(options.limit);
 
   return prisma.$queryRawUnsafe<SearchMessageResult[]>(
     `
@@ -46,17 +82,10 @@ export async function searchMessages(
         1 - (e."embedding" <=> $1::vector) as "similarity"
       from "ContentEmbedding" e
       join "ContentItem" m on m."id" = e."itemId"
-      where
-        m."sourceId" = $2
-        and e."model" = $3
-        and m."engagementScore" >= $4
+      where ${whereClauses.join("\n        and ")}
       order by e."embedding" <=> $1::vector
-      limit $5
+      limit $${params.length}
     `,
-    toPgVectorLiteral(queryEmbedding),
-    options.sourceId,
-    config.model,
-    minEngagementScore,
-    options.limit,
+    ...params,
   );
 }

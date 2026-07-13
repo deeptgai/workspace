@@ -6,7 +6,7 @@ import {
   type SnapshotGeneratedImage,
   type SnapshotSignal,
 } from "../src/snapshots/sourceSnapshotSchema";
-import { sourceSlug } from "./sourceSlug";
+import { normalizeSourceSlugParam, sourceSlug } from "./sourceSlug";
 
 export async function getSourcesOverview() {
   const chats = await prisma.source.findMany({
@@ -350,7 +350,7 @@ export async function getSnapshot(snapshotId: string) {
 }
 
 async function findSourceBySlug(slug: string) {
-  const normalizedSlug = slug.trim().toLowerCase();
+  const normalizedSlug = normalizeSourceSlugParam(slug);
   const sources = await prisma.source.findMany({
     select: {
       id: true,
@@ -370,7 +370,7 @@ async function findSourceBySlug(slug: string) {
   });
 
   return sources.find((source) => sourceSlug(source.username || source.title) === normalizedSlug) ??
-    sources.find((source) => source.id === slug) ??
+    sources.find((source) => source.id === slug || source.id === normalizedSlug) ??
     null;
 }
 

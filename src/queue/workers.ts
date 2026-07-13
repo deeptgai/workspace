@@ -13,6 +13,7 @@ import { generateCommunitySnapshot, generateCommunitySnapshotSection } from "../
 import { generateAndStoreSnapshotCoverImage } from "../images/snapshotCoverImages.js";
 import { generateAndStoreSignalPreviewImage } from "../images/signalPreviewImages.js";
 import { curateSnapshotSignalsIntoSource } from "../signals/sourceSignalCurator.js";
+import { markSnapshotAnalysisComplete } from "../snapshots/analysisState.js";
 import { patchSnapshotPipeline } from "../snapshots/pipeline.js";
 import { connectTelegramClient } from "../telegram/client.js";
 import { resolveDialogEntity } from "../telegram/dialogs.js";
@@ -677,6 +678,19 @@ export function startWorkers() {
           completedAt: new Date().toISOString(),
         },
       });
+      const analysisState = pending === 0
+        ? await markSnapshotAnalysisComplete(prisma, job.data.snapshotId)
+        : null;
+
+      if (analysisState) {
+        await patchSnapshotPipeline(prisma, job.data.snapshotId, {
+          analysis: {
+            status: "committed",
+            stateId: analysisState.id,
+            committedAt: new Date().toISOString(),
+          },
+        });
+      }
 
       console.log(`[${SOURCE_SIGNAL_CURATION_QUEUE}] job ${job.id} complete`, result);
       return result;

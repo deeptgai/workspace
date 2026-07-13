@@ -319,6 +319,11 @@ export async function fullImportAction(formData: FormData) {
         sourceId: chat.id,
       },
     }),
+    prisma.sourceAnalysisState.deleteMany({
+      where: {
+        sourceId: chat.id,
+      },
+    }),
     prisma.source.update({
       where: {
         id: chat.id,

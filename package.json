@@ -16,7 +16,8 @@
     "cli": "node dist/cli.js",
     "worker": "node dist/worker.js",
     "db:generate": "prisma generate",
-    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate deploy",
+    "db:deploy": "node dist/scripts/prepareMigrations.js && prisma migrate deploy",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

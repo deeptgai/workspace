@@ -8,6 +8,7 @@ export type SnapshotPipelinePatch = {
   status?: SnapshotPipelineStageStatus;
   import?: JsonRecord;
   embeddings?: JsonRecord;
+  analysis?: JsonRecord;
   sections?: JsonRecord;
   snapshot?: JsonRecord;
   curation?: JsonRecord;
@@ -55,7 +56,7 @@ export async function patchSnapshotPipeline(
     next.status = patch.status;
   }
 
-  for (const key of ["import", "embeddings", "sections", "snapshot", "curation", "formatting", "images"] as const) {
+  for (const key of ["import", "embeddings", "analysis", "sections", "snapshot", "curation", "formatting", "images"] as const) {
     if (patch[key]) {
       next[key] = mergeRecord(current[key], patch[key]);
     }
@@ -95,6 +96,9 @@ export function initialSnapshotPipeline(params: {
     createdAt: now,
     updatedAt: now,
     snapshot: {
+      status: "pending",
+    },
+    analysis: {
       status: "pending",
     },
     sections: {
