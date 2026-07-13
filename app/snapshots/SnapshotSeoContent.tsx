@@ -20,6 +20,7 @@ type SeoEvidenceMessage = {
 type SnapshotSeoContentProps = {
   snapshot: ChannelSnapshotDocument;
   evidenceMessages: SeoEvidenceMessage[];
+  activeSignalId?: string | null;
 };
 
 const kindLabels: Record<SnapshotSignalKind, string> = {
@@ -66,18 +67,18 @@ function signalDate(signal: SnapshotSignal) {
   return signal.timeline?.firstEvidenceAt ?? signal.timeline?.firstPostAt ?? signal.timeline?.firstCommentAt ?? null;
 }
 
-function sectionSignals(snapshot: ChannelSnapshotDocument, kind: SnapshotSignalKind) {
-  return sortSignalsDescending(snapshot.signals.filter((signal) => signal.kind === kind));
-}
-
-export function SnapshotSeoContent({ snapshot, evidenceMessages }: SnapshotSeoContentProps) {
+export function SnapshotSeoContent({ snapshot, evidenceMessages, activeSignalId = null }: SnapshotSeoContentProps) {
   const evidenceById = new Map(evidenceMessages.map((message) => [message.externalId, message]));
-  const kinds = Array.from(new Set(snapshot.signals.map((signal) => signal.kind)));
+  const activeSignal = activeSignalId
+    ? snapshot.signals.find((signal) => signal.id === activeSignalId) ?? null
+    : null;
+  const seoSignals = activeSignal ? [activeSignal] : snapshot.signals;
+  const kinds = Array.from(new Set(seoSignals.map((signal) => signal.kind)));
 
   return (
-    <article className="sr-only" aria-label="Текстовая версия снимка">
+    <article className="sr-only" aria-label={activeSignal ? "Текстовая версия сигнала" : "Текстовая версия снимка"}>
       <header>
-        <h1>{snapshot.chatTitle}</h1>
+        <h1>{activeSignal ? cleanText(activeSignal.title) : snapshot.chatTitle}</h1>
         <p>{snapshot.title}</p>
         {snapshot.period.from || snapshot.period.to ? (
           <p>
@@ -89,7 +90,7 @@ export function SnapshotSeoContent({ snapshot, evidenceMessages }: SnapshotSeoCo
       {kinds.map((kind) => (
         <section key={kind}>
           <h2>{kindLabels[kind]}</h2>
-          {sectionSignals(snapshot, kind).map((signal) => {
+          {sortSignalsDescending(seoSignals.filter((signal) => signal.kind === kind)).map((signal) => {
             const date = signalDate(signal);
             const evidence = uniqueEvidence(signal.evidence);
 

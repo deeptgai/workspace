@@ -4,17 +4,30 @@ import { DatabaseZap, FileDown, FilePlus2, RefreshCw } from "lucide-react";
 import { checkUpdatesAction, createSnapshotAction, fullImportAction, retrySnapshotSectionAction } from "../../actions";
 import { AppShell, ItemsBadge, SnapshotsBadge, Stat, TypeBadge } from "../../components";
 import { compactText, formatDate, formatDateTime, formatNumber, getSourceDetail } from "../../data";
+import { sourceSlug } from "../../sourceSlug";
 import { SnapshotAutoRefresh } from "./SnapshotAutoRefresh";
 
 export const dynamic = "force-dynamic";
 
-function snapshotSlug(title: string) {
-  return title
-    .toLowerCase()
-    .replace(/@/g, "")
-    .replace(/[^a-zа-я0-9]+/giu, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "snapshot";
+function jsonRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function pipelineSummary(value: unknown) {
+  const pipeline = jsonRecord(value);
+  const curation = jsonRecord(pipeline.curation);
+  const images = jsonRecord(pipeline.images);
+
+  if (!Object.keys(pipeline).length) {
+    return null;
+  }
+
+  return [
+    `pipeline: ${pipeline.status ?? "unknown"}`,
+    curation.status ? `curator: ${curation.status}` : null,
+    typeof curation.pending === "number" ? `pending: ${curation.pending}` : null,
+    images.status ? `images: ${images.status}` : null,
+  ].filter(Boolean).join(" · ");
 }
 
 export default async function SourcePage({
@@ -117,6 +130,7 @@ export default async function SourcePage({
                   const completedSections = snapshot.sections.filter((section) => section.status === "completed").length;
                   const activeSections = snapshot.sections.filter((section) => section.status === "running");
                   const failedSection = snapshot.sections.find((section) => section.status === "failed");
+                  const pipeline = pipelineSummary(snapshot.pipeline);
 
                   return (
                     <tr key={snapshot.id}>
@@ -124,7 +138,7 @@ export default async function SourcePage({
                         {snapshot.status === "completed" ? (
                           <Link
                             className="font-bold text-cyan-700 underline decoration-cyan-300 underline-offset-4 transition hover:text-cyan-900 hover:decoration-cyan-600"
-                            href={`/s/${snapshotSlug(chat.username || chat.title)}/${snapshot.id}`}
+                            href={`/s/${sourceSlug(chat.username || chat.title)}`}
                             target="_blank"
                             rel="noreferrer"
                           >
@@ -146,6 +160,7 @@ export default async function SourcePage({
                             {failedSection ? ` · ошибка: ${failedSection.title}` : ""}
                           </div>
                         ) : null}
+                        {pipeline ? <div className="text-muted small-text">{pipeline}</div> : null}
                         {failedSection ? (
                           <form action={retrySnapshotSectionAction} className="mt-2">
                             <input type="hidden" name="snapshotId" value={snapshot.id} />

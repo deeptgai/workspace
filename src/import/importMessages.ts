@@ -3,7 +3,6 @@ import type { TelegramClient } from "telegram";
 import { Api } from "telegram";
 import type { ResolvedDialogEntity } from "../telegram/dialogs.js";
 import { getDialogInfo } from "../telegram/dialogs.js";
-import { sleep } from "../utils/sleep.js";
 
 export type ImportMode = "sync" | "backfill" | "new";
 export type ImportBatchPhase = "backfill" | "new";
@@ -14,15 +13,8 @@ export type ImportOptions = {
   batchSize: number;
   sleepMs: number;
   sinceDate?: Date;
-};
-
-export type ImportResult = {
-  sourceId: string;
-  chatTitle: string;
-  mode: ImportMode;
-  imported: number;
-  oldestExternalId: string | null;
-  newestExternalId: string | null;
+  untilDate?: Date;
+  backfillOffsetId?: number;
 };
 
 export type ImportBatchResult = {
@@ -31,7 +23,9 @@ export type ImportBatchResult = {
   mode: ImportMode;
   phase: ImportBatchPhase;
   imported: number;
+  scanned: number;
   reachedEnd: boolean;
+  nextBackfillOffsetId?: number;
   oldestExternalId: string | null;
   newestExternalId: string | null;
 };
@@ -42,7 +36,6 @@ type SaveMessageBatchOptions = {
   importState?: Pick<SourceImportState, "oldestExternalId" | "newestExternalId"> | null;
 };
 
-const DEFAULT_MESSAGE_LIMIT = 100;
 const PROFILE_PHOTO_MAX_BYTES = 32_000;
 const CONTENT_IMPORT_SCOPE = "content";
 
@@ -64,19 +57,25 @@ function maxTelegramExternalId(a: string | null, b: number) {
   return String(Math.max(externalIdToTelegramId(a), b));
 }
 
-function filterMessagesSince(messages: Api.Message[], sinceDate?: Date) {
-  if (!sinceDate) {
+function filterMessagesWindow(messages: Api.Message[], options: Pick<ImportOptions, "sinceDate" | "untilDate">) {
+  if (!options.sinceDate && !options.untilDate) {
     return {
       messages,
       reachedSinceDate: false,
     };
   }
 
-  const sinceTime = sinceDate.getTime();
+  const sinceTime = options.sinceDate?.getTime();
+  const untilTime = options.untilDate?.getTime();
 
   return {
-    messages: messages.filter((message) => message.date * 1000 >= sinceTime),
-    reachedSinceDate: messages.some((message) => message.date * 1000 < sinceTime),
+    messages: messages.filter((message) => {
+      const time = message.date * 1000;
+      return (sinceTime === undefined || time >= sinceTime) && (untilTime === undefined || time <= untilTime);
+    }),
+    reachedSinceDate: sinceTime === undefined
+      ? false
+      : messages.some((message) => message.date * 1000 < sinceTime),
   };
 }
 
@@ -532,19 +531,24 @@ async function importBackfillBatch(
   chat: Source,
   importState: Pick<SourceImportState, "oldestExternalId" | "newestExternalId">,
   batchSize: number,
-  sinceDate?: Date,
-): Promise<Pick<ImportBatchResult, "imported" | "reachedEnd">> {
-  const offsetId = externalIdToTelegramId(importState.oldestExternalId);
+  options: Pick<ImportOptions, "sinceDate" | "untilDate" | "backfillOffsetId">,
+): Promise<Pick<ImportBatchResult, "imported" | "scanned" | "reachedEnd" | "nextBackfillOffsetId">> {
+  const offsetId = options.backfillOffsetId ?? externalIdToTelegramId(importState.oldestExternalId);
   const messages = await client.getMessages(entity, {
     limit: batchSize,
     offsetId,
   });
   const realMessages = messages.filter((message): message is Api.Message => message instanceof Api.Message);
-  const filtered = filterMessagesSince(realMessages, sinceDate);
+  const filtered = filterMessagesWindow(realMessages, options);
+  const nextBackfillOffsetId = realMessages.length
+    ? Math.min(...realMessages.map((message) => message.id))
+    : offsetId;
 
   return {
     imported: await saveMessageBatch(prisma, client, chat, filtered.messages, { importState }),
+    scanned: realMessages.length,
     reachedEnd: realMessages.length === 0 || filtered.reachedSinceDate,
+    nextBackfillOffsetId,
   };
 }
 
@@ -555,8 +559,8 @@ async function importNewBatch(
   chat: Source,
   importState: Pick<SourceImportState, "oldestExternalId" | "newestExternalId">,
   batchSize: number,
-  sinceDate?: Date,
-): Promise<Pick<ImportBatchResult, "imported" | "reachedEnd">> {
+  options: Pick<ImportOptions, "sinceDate" | "untilDate">,
+): Promise<Pick<ImportBatchResult, "imported" | "scanned" | "reachedEnd" | "nextBackfillOffsetId">> {
   const minId = externalIdToTelegramId(importState.newestExternalId);
   const messages = await client.getMessages(entity, {
     limit: batchSize,
@@ -564,100 +568,13 @@ async function importNewBatch(
     reverse: true,
   });
   const realMessages = messages.filter((message): message is Api.Message => message instanceof Api.Message);
-  const filtered = filterMessagesSince(realMessages, sinceDate);
+  const filtered = filterMessagesWindow(realMessages, options);
 
   return {
     imported: await saveMessageBatch(prisma, client, chat, filtered.messages, { importState }),
+    scanned: realMessages.length,
     reachedEnd: realMessages.length === 0 || filtered.reachedSinceDate,
-  };
-}
-
-async function runMode(
-  prisma: PrismaClient,
-  client: TelegramClient,
-  entity: ResolvedDialogEntity,
-  chat: Source,
-  importState: Pick<SourceImportState, "oldestExternalId" | "newestExternalId">,
-  options: Omit<ImportOptions, "mode"> & { mode: "backfill" | "new" },
-): Promise<number> {
-  let imported = 0;
-
-  while (imported < options.limit) {
-    const remaining = options.limit - imported;
-    const batchSize = Math.min(options.batchSize, remaining);
-    const result = options.mode === "new"
-      ? await importNewBatch(prisma, client, entity, chat, importState, batchSize, options.sinceDate)
-      : await importBackfillBatch(prisma, client, entity, chat, importState, batchSize, options.sinceDate);
-
-    if (result.imported === 0) {
-      break;
-    }
-
-    imported += result.imported;
-    console.log(
-      `Imported ${imported}/${options.limit}; oldest=${importState.oldestExternalId ?? "-"} newest=${importState.newestExternalId ?? "-"}`,
-    );
-
-    if (result.reachedEnd || imported >= options.limit) {
-      break;
-    }
-
-    await sleep(options.sleepMs);
-  }
-
-  return imported;
-}
-
-export async function importMessages(
-  prisma: PrismaClient,
-  client: TelegramClient,
-  entity: ResolvedDialogEntity,
-  options: ImportOptions,
-): Promise<ImportResult> {
-  const chat = await upsertSource(prisma, client, entity);
-  const importState = await getContentImportState(prisma, chat);
-  const normalizedOptions = {
-    mode: options.mode,
-    limit: Math.max(options.limit, 0) || DEFAULT_MESSAGE_LIMIT,
-    batchSize: Math.max(options.batchSize, 1),
-    sleepMs: Math.max(options.sleepMs, 0),
-  };
-
-  let imported = 0;
-
-  if (normalizedOptions.mode === "sync" || normalizedOptions.mode === "new") {
-    imported += await runMode(prisma, client, entity, chat, importState, {
-      ...normalizedOptions,
-      mode: "new",
-    });
-  }
-
-  if (normalizedOptions.mode === "sync" || normalizedOptions.mode === "backfill") {
-    const remainingLimit = normalizedOptions.limit - imported;
-
-    if (remainingLimit > 0) {
-      imported += await runMode(prisma, client, entity, chat, importState, {
-        ...normalizedOptions,
-        limit: remainingLimit,
-        mode: "backfill",
-      });
-    }
-  }
-
-  const refreshedChat = await prisma.source.findUniqueOrThrow({
-    where: {
-      id: chat.id,
-    },
-  });
-  const refreshedImportState = await getContentImportState(prisma, refreshedChat);
-
-  return {
-    sourceId: refreshedChat.id,
-    chatTitle: refreshedChat.title,
-    mode: options.mode,
-    imported,
-    oldestExternalId: refreshedImportState.oldestExternalId,
-    newestExternalId: refreshedImportState.newestExternalId,
+    nextBackfillOffsetId: undefined,
   };
 }
 
@@ -671,8 +588,8 @@ export async function importMessageBatch(
   const importState = await getContentImportState(prisma, chat);
   const normalizedBatchSize = Math.max(Math.min(options.batchSize, options.limit), 1);
   const result = options.phase === "new"
-    ? await importNewBatch(prisma, client, entity, chat, importState, normalizedBatchSize, options.sinceDate)
-    : await importBackfillBatch(prisma, client, entity, chat, importState, normalizedBatchSize, options.sinceDate);
+    ? await importNewBatch(prisma, client, entity, chat, importState, normalizedBatchSize, options)
+    : await importBackfillBatch(prisma, client, entity, chat, importState, normalizedBatchSize, options);
   const refreshedChat = await prisma.source.findUniqueOrThrow({
     where: {
       id: chat.id,
@@ -686,7 +603,9 @@ export async function importMessageBatch(
     mode: options.mode,
     phase: options.phase,
     imported: result.imported,
+    scanned: result.scanned,
     reachedEnd: result.reachedEnd,
+    nextBackfillOffsetId: result.nextBackfillOffsetId,
     oldestExternalId: refreshedImportState.oldestExternalId,
     newestExternalId: refreshedImportState.newestExternalId,
   };

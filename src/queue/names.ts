@@ -6,3 +6,4 @@ export const SOURCE_SNAPSHOT_QUEUE = "source-snapshot";
 export const SOURCE_SNAPSHOT_SECTION_QUEUE = "source-snapshot-section";
 export const SNAPSHOT_COVER_IMAGE_QUEUE = "snapshot-cover-image";
 export const SIGNAL_PREVIEW_IMAGE_QUEUE = "signal-preview-image";
+export const SOURCE_SIGNAL_CURATION_QUEUE = "source-signal-curation";

@@ -1,8 +1,10 @@
-import type { getSnapshot } from "../data";
+import type { getSnapshot, getSourceSignalMap } from "../data";
 
 type Snapshot = NonNullable<Awaited<ReturnType<typeof getSnapshot>>>;
+type SourceSignalMap = NonNullable<Awaited<ReturnType<typeof getSourceSignalMap>>>;
+type SnapshotView = Snapshot | SourceSignalMap;
 
-export function getSnapshotEvidenceMessages(snapshot: Snapshot) {
+export function getSnapshotEvidenceMessages(snapshot: SnapshotView) {
   return snapshot.evidenceMessages.map((message) => ({
     externalId: message.externalId,
     kind: message.kind,
@@ -23,7 +25,7 @@ export function getSnapshotEvidenceMessages(snapshot: Snapshot) {
   }));
 }
 
-export function getSnapshotPeople(snapshot: Snapshot) {
+export function getSnapshotPeople(snapshot: SnapshotView) {
   return snapshot.topPeople.map((person) => ({
     user: person.user ? {
       externalId: person.user.externalId,

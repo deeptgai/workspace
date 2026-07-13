@@ -7,9 +7,12 @@ export type TelegramImportJobData = {
   batchSize: number;
   sleepMs: number;
   sinceDateIso?: string;
+  untilDateIso?: string;
   phase?: ImportBatchPhase;
   remaining?: number;
   importedTotal?: number;
+  scannedTotal?: number;
+  backfillOffsetId?: number;
   chainId?: string;
   importCommentsAfter?: {
     mode: "sync" | "new";
@@ -26,6 +29,7 @@ export type ContentEmbeddingJobData = {
 export type ContentFormattingJobData = {
   chat: string;
   limit: number;
+  snapshotId?: string;
   kind?: "post" | "comment";
   itemIds?: string[];
   skipExisting?: boolean;
@@ -56,4 +60,8 @@ export type SnapshotCoverImageJobData = {
 export type SignalPreviewImageJobData = {
   snapshotId: string;
   signalId: string;
+};
+
+export type SourceSignalCurationJobData = {
+  snapshotId: string;
 };

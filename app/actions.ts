@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "../src/db/prisma";
 import { enqueueSourceSnapshotJob } from "../src/queue/snapshotQueue";
+import { initialSnapshotPipeline } from "../src/snapshots/pipeline";
 
 type TelegramImportJobData = {
   chat: string;
@@ -146,6 +147,10 @@ export async function createSnapshotAction(formData: FormData) {
       title: `Снимок по каналу: ${chat.title}`,
       status: "pending",
       model: process.env.AI_MODEL || "unknown",
+      pipeline: initialSnapshotPipeline({
+        startedBy: "ui",
+        model: process.env.AI_MODEL || "unknown",
+      }),
     },
   });
 

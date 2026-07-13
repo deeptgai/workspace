@@ -1,0 +1,88 @@
+import { NextResponse } from "next/server";
+import { getSourceSignalMap } from "../../../../../data";
+import { getSnapshotEvidenceMessages } from "../../../../../snapshots/snapshotViewData";
+import { evidenceForSnapshot } from "../../../../../s/publicSnapshot";
+import { prisma } from "../../../../../../src/db/prisma";
+import { isPaidSectionId, paidSectionProduct, type PaidSectionId } from "../../../../../../src/telegram/starsPayments";
+import { getTelegramSessionFromCookieHeader } from "../../../../../../src/telegram/webAppSession";
+import { telegramInitDataMaxAgeSeconds, verifyTelegramWebAppInitData } from "../../../../../../src/telegram/webAppAuth";
+import type { SnapshotSignalKind } from "../../../../../../src/snapshots/sourceSnapshotSchema";
+import type { TelegramWebAppUser } from "../../../../../../src/telegram/webAppAuth";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+type SectionContentRequest = {
+  initData?: string;
+  slug?: string;
+  sectionId?: string;
+};
+
+const sectionSignalKind: Record<PaidSectionId, SnapshotSignalKind> = {
+  people: "person",
+  tools: "tool",
+};
+
+function requireTelegramUser(request: Request, initData: string | undefined, token: string): TelegramWebAppUser | null {
+  if (initData) {
+    const verified = verifyTelegramWebAppInitData(initData, token, { maxAgeSeconds: telegramInitDataMaxAgeSeconds() });
+
+    return verified?.user ?? null;
+  }
+
+  return getTelegramSessionFromCookieHeader(request.headers.get("cookie"))?.user ?? null;
+}
+
+export async function POST(request: Request) {
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  const body = (await request.json().catch(() => null)) as SectionContentRequest | null;
+  const initData = body?.initData?.trim();
+  const slug = body?.slug?.trim();
+  const sectionId = body?.sectionId?.trim() || "people";
+
+  if (!token) {
+    return NextResponse.json({ ok: false, error: "Missing TELEGRAM_BOT_TOKEN" }, { status: 500 });
+  }
+
+  if (!slug || !isPaidSectionId(sectionId)) {
+    return NextResponse.json({ ok: false, error: "Telegram auth, slug and valid section are required" }, { status: 401 });
+  }
+
+  const user = requireTelegramUser(request, initData, token);
+
+  if (!user) {
+    return NextResponse.json({ ok: false, error: "Telegram auth is required" }, { status: 401 });
+  }
+
+  const sourceMap = await getSourceSignalMap(slug);
+
+  if (!sourceMap) {
+    return NextResponse.json({ ok: false, error: "Source not found" }, { status: 404 });
+  }
+
+  const purchase = await prisma.telegramPurchase.findFirst({
+    where: {
+      telegramId: BigInt(user.id),
+      product: paidSectionProduct(sectionId),
+      sourceId: sourceMap.sourceId,
+      status: "paid",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!purchase) {
+    return NextResponse.json({ ok: false, error: "Paid access is required" }, { status: 403 });
+  }
+
+  const kind = sectionSignalKind[sectionId];
+  const signals = sourceMap.document.signals.filter((signal) => signal.kind === kind);
+  const sectionDocument = {
+    ...sourceMap.document,
+    signals,
+  };
+  const evidenceMessages = evidenceForSnapshot(sectionDocument, getSnapshotEvidenceMessages(sourceMap));
+
+  return NextResponse.json({ ok: true, signals, evidenceMessages });
+}

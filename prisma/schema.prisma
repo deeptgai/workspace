@@ -23,6 +23,7 @@ model Source {
 
   items        ContentItem[]
   snapshots    SourceSnapshot[]
+  signals      SourceSignal[]
   importStates SourceImportState[]
 
   @@unique([provider, externalId])
@@ -73,6 +74,47 @@ model Actor {
   @@index([username])
 }
 
+model TelegramUser {
+  id           String   @id @default(cuid())
+  telegramId   BigInt   @unique
+  username     String?
+  firstName    String?
+  lastName     String?
+  languageCode String?
+  rawJson      Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  purchases TelegramPurchase[]
+
+  @@index([username])
+}
+
+model TelegramPurchase {
+  id                      String    @id @default(cuid())
+  telegramUserId          String
+  telegramId              BigInt
+  product                 String
+  sourceId                String
+  status                  String    @default("pending")
+  currency                String    @default("XTR")
+  amount                  Int
+  invoicePayload          String    @unique
+  telegramPaymentChargeId String?
+  providerPaymentChargeId String?
+  paidAt                  DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  telegramUser TelegramUser @relation(fields: [telegramUserId], references: [id], onDelete: Cascade)
+
+  @@unique([telegramId, product, sourceId, status])
+  @@index([telegramUserId])
+  @@index([telegramId])
+  @@index([sourceId])
+  @@index([status])
+}
+
 model ContentItem {
   id                String   @id @default(cuid())
   sourceId          String
@@ -99,12 +141,14 @@ model ContentItem {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  source     Source             @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  parent     ContentItem?       @relation("ContentThread", fields: [parentId], references: [id], onDelete: Cascade)
-  children   ContentItem[]      @relation("ContentThread")
-  actor      Actor?             @relation(fields: [actorId], references: [id], onDelete: SetNull)
-  embeddings ContentEmbedding[]
-  formats    ContentItemFormat[]
+  source           Source                   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  parent           ContentItem?             @relation("ContentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  children         ContentItem[]            @relation("ContentThread")
+  actor            Actor?                   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  embeddings       ContentEmbedding[]
+  formats          ContentItemFormat[]
+  snapshotEvidence SnapshotSignalEvidence[]
+  sourceEvidence   SourceSignalEvidence[]
 
   @@unique([provider, sourceId, externalId, kind])
   @@index([sourceId, publishedAt])
@@ -158,6 +202,12 @@ model SourceSnapshot {
   kind        String
   title       String
   status      String    @default("pending")
+  periodFrom  DateTime?
+  periodTo    DateTime?
+  summary     String?
+  heroTheme   Json?
+  coverImage  Json?
+  pipeline    Json?
   document    Json?
   error       String?
   model       String
@@ -168,8 +218,10 @@ model SourceSnapshot {
 
   source   Source                  @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   sections SourceSnapshotSection[]
+  signals  SnapshotSignal[]
 
   @@index([sourceId, createdAt])
+  @@index([sourceId, periodFrom, periodTo])
   @@index([kind])
   @@index([status])
 }
@@ -196,4 +248,112 @@ model SourceSnapshotSection {
   @@index([snapshotId, status])
   @@index([sectionId])
   @@index([status])
+}
+
+model SnapshotSignal {
+  id               String    @id @default(cuid())
+  snapshotId       String
+  sourceId         String
+  externalSignalId String
+  kind             String
+  title            String
+  summary          String
+  canonicalClaim   String?
+  fingerprint      String?
+  tags             Json?
+  priority         String?
+  score            String?
+  confidence       Float?
+  metrics          Json?
+  url              String?
+  person           Json?
+  previewImage     Json?
+  timeline         Json?
+  sortAt           DateTime?
+  status           String    @default("pending")
+  resolution       Json?
+  sourceSignalId   String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  snapshot     SourceSnapshot           @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  sourceSignal SourceSignal?            @relation(fields: [sourceSignalId], references: [id], onDelete: SetNull)
+  evidence     SnapshotSignalEvidence[]
+
+  @@unique([snapshotId, externalSignalId])
+  @@index([snapshotId, kind])
+  @@index([snapshotId, status])
+  @@index([sourceId, kind])
+  @@index([sourceSignalId])
+  @@index([sortAt])
+}
+
+model SnapshotSignalEvidence {
+  id               String   @id @default(cuid())
+  snapshotSignalId String
+  contentItemId    String?
+  itemExternalId   String
+  quote            String?
+  reason           String?
+  position         Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  snapshotSignal SnapshotSignal @relation(fields: [snapshotSignalId], references: [id], onDelete: Cascade)
+  contentItem    ContentItem?   @relation(fields: [contentItemId], references: [id], onDelete: SetNull)
+
+  @@unique([snapshotSignalId, itemExternalId])
+  @@index([contentItemId])
+  @@index([itemExternalId])
+}
+
+model SourceSignal {
+  id              String    @id @default(cuid())
+  sourceId        String
+  kind            String
+  title           String
+  summary         String
+  canonicalClaim  String
+  fingerprint     String
+  tags            Json?
+  status          String    @default("active")
+  score           Float     @default(0)
+  confidence      Float?
+  previewImage    Json?
+  firstEvidenceAt DateTime?
+  lastEvidenceAt  DateTime?
+  metadata        Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  source          Source                 @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  snapshotSignals SnapshotSignal[]
+  evidence        SourceSignalEvidence[]
+
+  @@unique([sourceId, kind, fingerprint])
+  @@index([sourceId, kind])
+  @@index([sourceId, status])
+  @@index([lastEvidenceAt])
+}
+
+model SourceSignalEvidence {
+  id                  String   @id @default(cuid())
+  sourceSignalId      String
+  contentItemId       String?
+  snapshotSignalId    String?
+  itemExternalId      String
+  quote               String?
+  reason              String?
+  confidence          Float?
+  firstSeenSnapshotId String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  sourceSignal SourceSignal @relation(fields: [sourceSignalId], references: [id], onDelete: Cascade)
+  contentItem  ContentItem? @relation(fields: [contentItemId], references: [id], onDelete: SetNull)
+
+  @@unique([sourceSignalId, itemExternalId])
+  @@index([contentItemId])
+  @@index([snapshotSignalId])
+  @@index([itemExternalId])
 }

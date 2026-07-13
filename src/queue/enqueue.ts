@@ -1,6 +1,6 @@
 import { createQueues } from "./queues.js";
 import { enqueueSourceSnapshotJob as enqueueSharedSourceSnapshotJob } from "./snapshotQueue.js";
-import type { SourceSnapshotJobData, SourceSnapshotSectionJobData, CommentImportJobData, ContentEmbeddingJobData, TelegramImportJobData, SignalPreviewImageJobData, SnapshotCoverImageJobData, ContentFormattingJobData } from "./types.js";
+import type { SourceSnapshotJobData, SourceSnapshotSectionJobData, CommentImportJobData, ContentEmbeddingJobData, TelegramImportJobData, SignalPreviewImageJobData, SnapshotCoverImageJobData, ContentFormattingJobData, SourceSignalCurationJobData } from "./types.js";
 
 function slug(value: string): string {
   return value.trim().replace(/^@/, "").toLowerCase().replace(/[^a-z0-9а-яё_-]+/giu, "-");
@@ -20,6 +20,7 @@ async function closeQueues(queues: ReturnType<typeof createQueues>) {
     queues.sourceSnapshotSectionQueue.close(),
     queues.snapshotCoverImageQueue.close(),
     queues.signalPreviewImageQueue.close(),
+    queues.sourceSignalCurationQueue.close(),
   ]);
 }
 
@@ -105,6 +106,18 @@ export async function enqueueSignalPreviewImageJob(data: SignalPreviewImageJobDa
   try {
     return await queues.signalPreviewImageQueue.add("generate", data, {
       jobId: uniqueJobId("signal-preview-image", `${data.snapshotId}-${data.signalId}`),
+    });
+  } finally {
+    await closeQueues(queues);
+  }
+}
+
+export async function enqueueSourceSignalCurationJob(data: SourceSignalCurationJobData) {
+  const queues = createQueues();
+
+  try {
+    return await queues.sourceSignalCurationQueue.add("curate", data, {
+      jobId: uniqueJobId("source-signal-curation", data.snapshotId),
     });
   } finally {
     await closeQueues(queues);

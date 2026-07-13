@@ -1,8 +1,8 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { isChannelSnapshotDocument, type SnapshotGeneratedImage } from "../snapshots/sourceSnapshotSchema.js";
+import type { SnapshotGeneratedImage } from "../snapshots/sourceSnapshotSchema.js";
 import { putObject, stableObjectKey } from "../storage/objectStorage.js";
+import { buildSnapshotReadModel } from "../signals/snapshotReadModel.js";
 import { generateSnapshotCoverImage } from "./falSnapshotCover.js";
-import { withSnapshotDocumentUpdateLock } from "./snapshotDocumentUpdateLock.js";
 
 export type SnapshotCoverImageResult =
   | {
@@ -34,11 +34,18 @@ export async function generateAndStoreSnapshotCoverImage(
     },
   });
 
-  if (!snapshot || !isChannelSnapshotDocument(snapshot.document)) {
-    throw new Error(`Snapshot document not found or not completed: ${snapshotId}`);
+  if (!snapshot) {
+    throw new Error(`Snapshot not found: ${snapshotId}`);
   }
 
-  if (skipExisting && snapshot.document.coverImage?.url) {
+  const existingCoverImage = snapshot.coverImage &&
+    typeof snapshot.coverImage === "object" &&
+    !Array.isArray(snapshot.coverImage) &&
+    typeof snapshot.coverImage.url === "string"
+    ? snapshot.coverImage
+    : undefined;
+
+  if (skipExisting && existingCoverImage?.url) {
     return {
       status: "skipped",
       snapshotId,
@@ -47,7 +54,13 @@ export async function generateAndStoreSnapshotCoverImage(
     };
   }
 
-  const coverImage = await generateSnapshotCoverImage(snapshot.document);
+  const document = await buildSnapshotReadModel(prisma, snapshot);
+
+  if (!document) {
+    throw new Error(`Snapshot signals not found while generating cover image: ${snapshotId}`);
+  }
+
+  const coverImage = await generateSnapshotCoverImage(document);
   const falImageResponse = await fetch(coverImage.url);
 
   if (!falImageResponse.ok) {
@@ -70,31 +83,13 @@ export async function generateAndStoreSnapshotCoverImage(
     contentType: storedObject.contentType,
   };
 
-  await withSnapshotDocumentUpdateLock(snapshotId, async () => {
-    const latestSnapshot = await prisma.sourceSnapshot.findUnique({
-      where: {
-        id: snapshotId,
-      },
-      select: {
-        document: true,
-      },
-    });
-
-    if (!latestSnapshot || !isChannelSnapshotDocument(latestSnapshot.document)) {
-      throw new Error(`Snapshot document not found while saving cover image: ${snapshotId}`);
-    }
-
-    await prisma.sourceSnapshot.update({
-      where: {
-        id: snapshotId,
-      },
-      data: {
-        document: {
-          ...latestSnapshot.document,
-          coverImage: storedCoverImage,
-        } as Prisma.InputJsonValue,
-      },
-    });
+  await prisma.sourceSnapshot.update({
+    where: {
+      id: snapshotId,
+    },
+    data: {
+      coverImage: storedCoverImage as Prisma.InputJsonValue,
+    },
   });
 
   return {

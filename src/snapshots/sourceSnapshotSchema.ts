@@ -141,6 +141,7 @@ export type ChannelSnapshotDocument = {
   title: string;
   sourceId: string;
   chatTitle: string;
+  summary?: string | null;
   generatedAt: string;
   period: {
     from: string | null;

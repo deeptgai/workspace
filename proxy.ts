@@ -4,6 +4,9 @@ import { NextResponse } from "next/server";
 const PUBLIC_PATH_PREFIXES = [
   "/s/",
   "/share/snapshots/",
+  "/api/s/",
+  "/api/telegram/",
+  "/media/",
   "/_next/",
 ];
 

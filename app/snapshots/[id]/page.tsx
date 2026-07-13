@@ -7,22 +7,14 @@ import { formatDateTime, getSnapshot } from "../../data";
 import { getSnapshotEvidenceMessages, getSnapshotPeople } from "../snapshotViewData";
 import { SnapshotSeoContent } from "../SnapshotSeoContent";
 import { snapshotMetadata } from "../metadata";
-import { SnapshotTabs } from "./SnapshotTabs";
+import { SnapshotAppIsland } from "./SnapshotAppIsland";
+import { sourceSlug } from "../../sourceSlug";
 
 export const dynamic = "force-dynamic";
 
 type SnapshotPageProps = {
   params: Promise<{ id: string }>;
 };
-
-function snapshotSlug(title: string) {
-  return title
-    .toLowerCase()
-    .replace(/@/g, "")
-    .replace(/[^a-zа-я0-9]+/giu, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "snapshot";
-}
 
 export async function generateMetadata({ params }: SnapshotPageProps): Promise<Metadata> {
   const { id } = await params;
@@ -62,12 +54,12 @@ export default async function SnapshotPage({ params }: SnapshotPageProps) {
           </p>
         </div>
         <div className="actions">
-          <Link className="button" href={`/s/${snapshotSlug(snapshot.chat.username || snapshot.chat.title)}/${snapshot.id}`}>Share view</Link>
+          <Link className="button" href={`/s/${sourceSlug(snapshot.chat.username || snapshot.chat.title)}`}>Share view</Link>
           <Link className="button" href={`/sources/${snapshot.sourceId}`}>Back to source</Link>
         </div>
       </div>
 
-      <SnapshotTabs
+      <SnapshotAppIsland
         snapshot={snapshot.document}
         evidenceMessages={evidenceMessages}
         people={getSnapshotPeople(snapshot)}

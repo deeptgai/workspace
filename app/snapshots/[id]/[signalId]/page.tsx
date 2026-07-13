@@ -7,7 +7,8 @@ import { formatDateTime, getSnapshot } from "../../../data";
 import { getSnapshotEvidenceMessages, getSnapshotPeople } from "../../snapshotViewData";
 import { SnapshotSeoContent } from "../../SnapshotSeoContent";
 import { signalMetadata } from "../../metadata";
-import { SnapshotTabs } from "../SnapshotTabs";
+import { SnapshotAppIsland } from "../SnapshotAppIsland";
+import { sourceSlug } from "../../../sourceSlug";
 
 export const dynamic = "force-dynamic";
 
@@ -21,15 +22,6 @@ function normalizeSignalId(signalId: string) {
   } catch {
     return signalId;
   }
-}
-
-function snapshotSlug(title: string) {
-  return title
-    .toLowerCase()
-    .replace(/@/g, "")
-    .replace(/[^a-zа-я0-9]+/giu, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "snapshot";
 }
 
 export async function generateMetadata({ params }: SnapshotSignalPageProps): Promise<Metadata> {
@@ -80,12 +72,12 @@ export default async function SnapshotSignalPage({ params }: SnapshotSignalPageP
           </p>
         </div>
         <div className="actions">
-          <Link className="button" href={`/s/${snapshotSlug(snapshot.chat.username || snapshot.chat.title)}/${snapshot.id}`}>Share view</Link>
+          <Link className="button" href={`/s/${sourceSlug(snapshot.chat.username || snapshot.chat.title)}`}>Share view</Link>
           <Link className="button" href={`/sources/${snapshot.sourceId}`}>Back to source</Link>
         </div>
       </div>
 
-      <SnapshotTabs
+      <SnapshotAppIsland
         snapshot={snapshot.document}
         evidenceMessages={evidenceMessages}
         people={getSnapshotPeople(snapshot)}
@@ -93,7 +85,7 @@ export default async function SnapshotSignalPage({ params }: SnapshotSignalPageP
         initialActiveSignalId={normalizedSignalId}
         basePath={`/snapshots/${id}`}
       />
-      <SnapshotSeoContent snapshot={snapshot.document} evidenceMessages={evidenceMessages} />
+      <SnapshotSeoContent snapshot={snapshot.document} evidenceMessages={evidenceMessages} activeSignalId={normalizedSignalId} />
     </AppShell>
   );
 }

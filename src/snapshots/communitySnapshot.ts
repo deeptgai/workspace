@@ -4,7 +4,7 @@ import type { AiConfig } from "../ai/config.js";
 import { loadEmbeddingsConfig } from "../embeddings/config.js";
 import { searchMessages, type SearchMessageResult } from "../rag/searchMessages.js";
 import { canGenerateSignalPreview } from "../images/falSignalPreview.js";
-import { enqueueContentFormattingJob, enqueueSignalPreviewImageJob, enqueueSnapshotCoverImageJob } from "../queue/enqueue.js";
+import { enqueueContentFormattingJob, enqueueSignalPreviewImageJob, enqueueSnapshotCoverImageJob, enqueueSourceSignalCurationJob } from "../queue/enqueue.js";
 import {
   CHANNEL_SNAPSHOT_SCHEMA_VERSION,
   type ChannelSnapshotDocument,
@@ -21,6 +21,9 @@ import {
 } from "./sourceSnapshotSchema.js";
 import { enrichSignalsWithTimeline } from "./signalTimeline.js";
 import { sortSignalsDescending } from "./signalOrdering.js";
+import { replaceSnapshotSignals } from "../signals/snapshotSignals.js";
+import { snapshotSignalsAsDocumentSignals } from "../signals/snapshotSignals.js";
+import { patchSnapshotPipeline } from "./pipeline.js";
 
 export type GenerateCommunitySnapshotOptions = {
   chat: Source;
@@ -54,11 +57,16 @@ type SectionAgentOutput = {
   segments?: Array<Partial<ChannelSnapshotPeopleSegment>>;
 };
 
+type ChannelSummaryAgentOutput = {
+  summary?: string;
+};
+
 type HeroThemeAgentOutput = Partial<ChannelSnapshotHeroTheme>;
 
 const ALLOWED_PRIORITIES = new Set<SnapshotItemPriority>(["high", "medium", "low"]);
 const HERO_PALETTES = ["emerald", "indigo", "amber", "rose", "slate", "cyan"] as const;
 const HERO_MOTIFS = ["network", "notes", "city", "market", "studio", "landscape"] as const;
+const SNAPSHOT_SUMMARY_MAX_LENGTH = 240;
 const STRUCTURAL_DISPLAY_TAGS = new Set([
   "идея",
   "идеи",
@@ -316,6 +324,47 @@ async function progressAgent(options: GenerateCommunitySnapshotOptions, progress
 
 function compactText(text: string | null, maxLength = 420): string {
   return (text ?? "<no text>").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function normalizeSnapshotSummary(text: string | null | undefined): string | null {
+  const cleaned = typeof text === "string"
+    ? text.replace(/\s+/g, " ").trim()
+    : "";
+
+  if (!cleaned) {
+    return null;
+  }
+
+  const sentences = cleaned
+    .match(/[^.!?…]+[.!?…]+|[^.!?…]+$/g)
+    ?.map((sentence) => sentence.trim())
+    .filter(Boolean) ?? [cleaned];
+  const summaryText = sentences.slice(0, 2).join(" ").replace(/\s+/g, " ").trim();
+
+  if (summaryText.length <= SNAPSHOT_SUMMARY_MAX_LENGTH) {
+    return summaryText;
+  }
+
+  return `${summaryText.slice(0, SNAPSHOT_SUMMARY_MAX_LENGTH - 1).trimEnd()}…`;
+}
+
+function fallbackSnapshotSummary(context: SnapshotContext, sections: ChannelSnapshotSection[]): string {
+  const activeSectionTitles = sections
+    .filter((section) => section.items.length > 0)
+    .slice(0, 3)
+    .map((section) => section.title.toLowerCase());
+  const focus = activeSectionTitles.length
+    ? `В фокусе: ${activeSectionTitles.join(", ")}.`
+    : "Карта помогает быстро увидеть практические сигналы из постов и обсуждений.";
+
+  return normalizeSnapshotSummary(`Канал ${context.chat.title} собран в карту сигналов для быстрого понимания пользы и контекста. ${focus}`)
+    ?? `Карта сигналов канала ${context.chat.title}.`;
+}
+
+function jsonObject(value: Prisma.JsonValue | null): Prisma.JsonObject {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Prisma.JsonObject
+    : {};
 }
 
 function formatMessageEvidence(messages: SearchMessageResult[]): string {
@@ -898,6 +947,85 @@ function normalizeHeroTheme(value: HeroThemeAgentOutput, context: SnapshotContex
   };
 }
 
+async function runChannelSummaryAgent(
+  aiConfig: AiConfig,
+  context: SnapshotContext,
+  sections: ChannelSnapshotSection[],
+  signals: SnapshotSignal[],
+  options?: Pick<GenerateCommunitySnapshotOptions, "onLog">,
+): Promise<string | null> {
+  logAgent(options ?? {}, "tool:channelSummaryAgent:start", {
+    sourceId: context.chat.id,
+    title: context.chat.title,
+  });
+
+  try {
+    const content = await createChatCompletion(aiConfig, [
+      {
+        role: "system",
+        content: [
+          "Ты ChannelSummaryAgent для Hero-блока карты Telegram-канала.",
+          "Твоя задача — написать короткий тизер канала, а не сводку всех разделов.",
+          "Тизер показывается в самом верху сайта, поэтому он должен быть компактным: 1-2 коротких предложения, максимум 240 символов.",
+          "Опиши канал в целом: главная тема, для кого он полезен и какую практическую ценность дает карта сигналов.",
+          "Не перечисляй разделы, не делай список, не вставляй переносы строк, не пиши технические id и ссылки.",
+          "Пиши строго на русском, кроме названий брендов, компаний, технологий и username.",
+          "Верни только JSON object без Markdown и без code fence.",
+          "JSON schema:",
+          JSON.stringify({
+            summary: "1-2 short Russian sentences with the top-level channel summary, max 240 characters",
+          }),
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          "Канал:",
+          JSON.stringify({
+            title: context.chat.title,
+            username: context.chat.username ? `@${context.chat.username}` : null,
+            type: context.chat.type,
+            messages: context.messageCount,
+            views: context.aggregate._sum.views ?? 0,
+            avgViews: Math.round(context.aggregate._avg.views ?? 0),
+            forwards: context.aggregate._sum.forwards ?? 0,
+            reactions: context.aggregate._sum.reactionsTotal ?? 0,
+            replies: context.aggregate._sum.repliesCount ?? 0,
+          }, null, 2),
+          "",
+          "Самые важные сигналы:",
+          signals.slice(0, 12).map((signal) => [
+            `- ${signal.kind}: ${signal.title}`,
+            signal.summary,
+            signal.tags.length ? `tags: ${signal.tags.join(", ")}` : "",
+          ].filter(Boolean).join(" | ")).join("\n") || "- none",
+          "",
+          "Сводки секций, только как контекст:",
+          sections.map((section) => `- ${section.title}: ${compactText(section.summary, 160)}`).join("\n") || "- none",
+        ].join("\n"),
+      },
+    ], { json: true });
+    const output = await parseJsonObject<ChannelSummaryAgentOutput>(aiConfig, content, (error) => {
+      logAgent(options ?? {}, "tool:channelSummaryAgent.repairJson:start", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    const summary = normalizeSnapshotSummary(output.summary);
+
+    logAgent(options ?? {}, "tool:channelSummaryAgent:complete", {
+      chars: summary?.length ?? 0,
+    });
+
+    return summary;
+  } catch (error) {
+    logAgent(options ?? {}, "tool:channelSummaryAgent:failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    return null;
+  }
+}
+
 async function generateHeroTheme(
   aiConfig: AiConfig,
   context: SnapshotContext,
@@ -985,6 +1113,73 @@ async function generateHeroTheme(
 
     return theme;
   }
+}
+
+export async function generateAndStoreSnapshotSummary(
+  prisma: PrismaClient,
+  aiConfig: AiConfig,
+  snapshotId: string,
+  options?: Pick<GenerateCommunitySnapshotOptions, "onLog">,
+): Promise<{
+  snapshotId: string;
+  sourceId: string;
+  sourceTitle: string;
+  summary: string;
+  previousSummary: string | null;
+}> {
+  const snapshot = await prisma.sourceSnapshot.findUnique({
+    where: {
+      id: snapshotId,
+    },
+    include: {
+      source: true,
+      sections: true,
+    },
+  });
+
+  if (!snapshot) {
+    throw new Error(`Snapshot not found: ${snapshotId}`);
+  }
+
+  const sections = SECTION_ORDER.flatMap((sectionId) => {
+    const section = snapshot.sections.find((candidate) => candidate.sectionId === sectionId);
+    return section ? [sectionFromDbRow(section)] : [];
+  });
+
+  if (!sections.length) {
+    throw new Error(`Snapshot sections not found: ${snapshotId}`);
+  }
+
+  const embeddingsConfig = loadEmbeddingsConfig();
+  const [context, storedSignals] = await Promise.all([
+    buildSnapshotContext(prisma, snapshot.source, embeddingsConfig.model),
+    snapshotSignalsAsDocumentSignals(prisma, snapshotId),
+  ]);
+  const signals = storedSignals.length ? storedSignals : buildSnapshotSignals(sections);
+  const summary = await runChannelSummaryAgent(aiConfig, context, sections, signals, options)
+    ?? fallbackSnapshotSummary(context, sections);
+  const document = {
+    ...jsonObject(snapshot.document),
+    summary,
+  } satisfies Prisma.InputJsonValue;
+
+  await prisma.sourceSnapshot.update({
+    where: {
+      id: snapshotId,
+    },
+    data: {
+      summary,
+      document,
+    },
+  });
+
+  return {
+    snapshotId,
+    sourceId: snapshot.sourceId,
+    sourceTitle: snapshot.source.title,
+    summary,
+    previousSummary: snapshot.summary,
+  };
 }
 
 async function buildSnapshotContext(prisma: PrismaClient, chat: Source, embeddingsModel: string): Promise<SnapshotContext> {
@@ -1401,6 +1596,33 @@ export async function generateCommunitySnapshot(
   });
 
   const title = `Снимок по каналу: ${options.chat.title}`;
+  const snapshotStartedAt = new Date();
+  const initialPipeline = {
+    status: "running",
+    updatedAt: snapshotStartedAt.toISOString(),
+    snapshot: {
+      status: "running",
+      startedAt: snapshotStartedAt.toISOString(),
+    },
+    sections: {
+      status: "pending",
+      total: SIGNAL_AGENTS.length,
+      completed: 0,
+      failed: 0,
+    },
+    curation: {
+      status: "pending",
+      processed: 0,
+    },
+    formatting: {
+      status: "pending",
+    },
+    images: {
+      status: "pending",
+      previewsTotal: 0,
+      previewsCompleted: 0,
+    },
+  } satisfies Prisma.InputJsonValue;
   const snapshot = options.snapshotId
     ? await prisma.sourceSnapshot.update({
         where: {
@@ -1409,10 +1631,11 @@ export async function generateCommunitySnapshot(
         data: {
           title,
           status: "running",
-          startedAt: new Date(),
+          startedAt: snapshotStartedAt,
           completedAt: null,
           error: null,
           model: aiConfig.model,
+          pipeline: initialPipeline,
         },
       })
     : await prisma.sourceSnapshot.create({
@@ -1421,8 +1644,9 @@ export async function generateCommunitySnapshot(
           kind: SNAPSHOT_KIND,
           title,
           status: "running",
-          startedAt: new Date(),
+          startedAt: snapshotStartedAt,
           model: aiConfig.model,
+          pipeline: initialPipeline,
         },
       });
   logAgent(options, "tool:updateSnapshotStatus", {
@@ -1467,6 +1691,16 @@ export async function generateCommunitySnapshot(
         agent: section.agent,
         status: "pending",
       })),
+  });
+  await patchSnapshotPipeline(prisma, snapshot.id, {
+    status: "running",
+    sections: {
+      status: "running",
+      total: SIGNAL_AGENTS.length,
+      completed: 0,
+      failed: 0,
+      startedAt: new Date().toISOString(),
+    },
   });
   logAgent(options, "tool:initSnapshotSections:complete", {
     snapshotId: snapshot.id,
@@ -1557,6 +1791,31 @@ export async function generateCommunitySnapshotSection(
         completedAt: new Date(),
       },
     });
+    const counts = await prisma.sourceSnapshotSection.groupBy({
+      by: ["status"],
+      where: {
+        snapshotId,
+      },
+      _count: {
+        _all: true,
+      },
+    });
+    const completed = counts.find((item) => item.status === "completed")?._count._all ?? 0;
+    const failed = counts.find((item) => item.status === "failed")?._count._all ?? 0;
+    const running = counts.find((item) => item.status === "running")?._count._all ?? 0;
+    const pending = counts.find((item) => item.status === "pending")?._count._all ?? 0;
+
+    await patchSnapshotPipeline(prisma, snapshotId, {
+      sections: {
+        status: failed > 0 ? "failed" : pending + running > 0 ? "running" : "completed",
+        total: counts.reduce((sum, item) => sum + item._count._all, 0),
+        completed,
+        failed,
+        running,
+        pending,
+        lastCompletedSectionId: definition.id,
+      },
+    });
 
     await completeSnapshotIfReady(prisma, aiConfig, options.chat, snapshotId, embeddingsConfig.model, options);
     logAgent(options, "agent:section:complete", {
@@ -1590,6 +1849,20 @@ export async function generateCommunitySnapshotSection(
         error: `${definition.agent}: ${message}`,
         completedAt: new Date(),
       },
+    });
+    await patchSnapshotPipeline(prisma, snapshotId, {
+      status: "failed",
+      sections: {
+        status: "failed",
+        failedSectionId: definition.id,
+        error: message,
+      },
+      errors: [{
+        stage: "sections",
+        sectionId: definition.id,
+        message,
+        at: new Date().toISOString(),
+      }],
     });
 
     throw error;
@@ -1631,11 +1904,11 @@ async function completeSnapshotIfReady(
   const previousDocument = storedSnapshot?.document &&
     typeof storedSnapshot.document === "object" &&
     !Array.isArray(storedSnapshot.document) &&
-    storedSnapshot.document.snapshotType === "channel" &&
-    Array.isArray(storedSnapshot.document.signals)
-    ? storedSnapshot.document as ChannelSnapshotDocument
+    storedSnapshot.document.snapshotType === "channel"
+    ? storedSnapshot.document as Partial<ChannelSnapshotDocument>
     : null;
-  const previousSignalsById = new Map((previousDocument?.signals ?? []).map((signal) => [signal.id, signal]));
+  const previousTableSignals = await snapshotSignalsAsDocumentSignals(prisma, snapshotId);
+  const previousSignalsById = new Map(previousTableSignals.map((signal) => [signal.id, signal]));
   const context = await buildSnapshotContext(prisma, chat, embeddingsModel);
   const orderedSections = SECTION_ORDER.flatMap((sectionId) => {
     const section = sections.find((candidate) => candidate.sectionId === sectionId);
@@ -1651,14 +1924,19 @@ async function completeSnapshotIfReady(
         }
       : signal;
   }));
-  const heroTheme = await generateHeroTheme(aiConfig, context, orderedSections, signals, options);
+  const [heroTheme, generatedSnapshotSummary] = await Promise.all([
+    generateHeroTheme(aiConfig, context, orderedSections, signals, options),
+    runChannelSummaryAgent(aiConfig, context, orderedSections, signals, options),
+  ]);
   const title = `Снимок по каналу: ${chat.title}`;
+  const snapshotSummary = generatedSnapshotSummary ?? fallbackSnapshotSummary(context, orderedSections);
   const snapshotDocument: ChannelSnapshotDocument = {
     schemaVersion: CHANNEL_SNAPSHOT_SCHEMA_VERSION,
     snapshotType: "channel",
     title,
     sourceId: chat.id,
     chatTitle: chat.title,
+    summary: snapshotSummary,
     generatedAt: new Date().toISOString(),
     period: {
       from: context.oldestMessageDate?.toISOString() ?? null,
@@ -1669,6 +1947,8 @@ async function completeSnapshotIfReady(
     signals,
   };
 
+  const { signals: _signals, ...snapshotDocumentMetadata } = snapshotDocument;
+
   await prisma.sourceSnapshot.update({
     where: {
       id: snapshotId,
@@ -1677,19 +1957,95 @@ async function completeSnapshotIfReady(
       status: "completed",
       completedAt: new Date(),
       model: aiConfig.model,
+      periodFrom: context.oldestMessageDate,
+      periodTo: context.newestMessageDate,
+      summary: snapshotSummary,
+      heroTheme: heroTheme satisfies Prisma.InputJsonValue,
+      coverImage: previousDocument?.coverImage ? previousDocument.coverImage satisfies Prisma.InputJsonValue : Prisma.JsonNull,
       document: {
-        ...snapshotDocument,
+        ...snapshotDocumentMetadata,
         embeddingModel: embeddingsModel,
       } satisfies Prisma.InputJsonValue,
     },
   });
+  const persistedSignals = await replaceSnapshotSignals(prisma, {
+    snapshotId,
+    sourceId: chat.id,
+    signals,
+  });
+  await patchSnapshotPipeline(prisma, snapshotId, {
+    status: "running",
+    snapshot: {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      signals: persistedSignals.signals,
+      evidence: persistedSignals.evidence,
+      periodFrom: context.oldestMessageDate?.toISOString() ?? null,
+      periodTo: context.newestMessageDate?.toISOString() ?? null,
+    },
+    sections: {
+      status: "completed",
+      total: sections.length,
+      completed: sections.length,
+      failed: 0,
+    },
+    curation: {
+      status: "pending",
+      pending: persistedSignals.signals,
+      processed: 0,
+    },
+  });
+
   logAgent(options ?? {}, "tool:completeSnapshotIfReady:complete", {
     snapshotId,
+    persistedSignals: persistedSignals.signals,
+    persistedEvidence: persistedSignals.evidence,
   });
+  try {
+    const curationJob = await enqueueSourceSignalCurationJob({
+      snapshotId,
+    });
+    await patchSnapshotPipeline(prisma, snapshotId, {
+      curation: {
+        status: "queued",
+        pending: persistedSignals.signals,
+        jobIds: [String(curationJob.id)],
+      },
+    });
+
+    logAgent(options ?? {}, "tool:sourceSignalCurator:enqueued", {
+      snapshotId,
+      jobId: curationJob.id,
+    });
+  } catch (error) {
+    await patchSnapshotPipeline(prisma, snapshotId, {
+      curation: {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      },
+      errors: [{
+        stage: "curation",
+        message: error instanceof Error ? error.message : String(error),
+        at: new Date().toISOString(),
+      }],
+    });
+    logAgent(options ?? {}, "tool:sourceSignalCurator:enqueueFailed", {
+      snapshotId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
   if (!snapshotDocument.coverImage?.url) {
     try {
       const coverJob = await enqueueSnapshotCoverImageJob({
         snapshotId,
+      });
+      await patchSnapshotPipeline(prisma, snapshotId, {
+        images: {
+          status: "queued",
+          coverStatus: "queued",
+          coverJobId: String(coverJob.id),
+        },
       });
 
       logAgent(options ?? {}, "tool:snapshotCoverImage:enqueued", {
@@ -1697,6 +2053,18 @@ async function completeSnapshotIfReady(
         jobId: coverJob.id,
       });
     } catch (error) {
+      await patchSnapshotPipeline(prisma, snapshotId, {
+        images: {
+          status: "failed",
+          coverStatus: "failed",
+          coverError: error instanceof Error ? error.message : String(error),
+        },
+        errors: [{
+          stage: "cover-image",
+          message: error instanceof Error ? error.message : String(error),
+          at: new Date().toISOString(),
+        }],
+      });
       logAgent(options ?? {}, "tool:snapshotCoverImage:enqueueFailed", {
         snapshotId,
         error: error instanceof Error ? error.message : String(error),
@@ -1713,8 +2081,17 @@ async function completeSnapshotIfReady(
       const formattingJob = await enqueueContentFormattingJob({
         chat: chat.username ? `@${chat.username}` : chat.title,
         limit: evidenceItemIds.length,
+        snapshotId,
         itemIds: evidenceItemIds,
         skipExisting: true,
+      });
+      await patchSnapshotPipeline(prisma, snapshotId, {
+        formatting: {
+          status: "queued",
+          total: evidenceItemIds.length,
+          completed: 0,
+          jobIds: [String(formattingJob.id)],
+        },
       });
 
       logAgent(options ?? {}, "tool:contentFormatting:enqueued", {
@@ -1723,6 +2100,17 @@ async function completeSnapshotIfReady(
         count: evidenceItemIds.length,
       });
     } catch (error) {
+      await patchSnapshotPipeline(prisma, snapshotId, {
+        formatting: {
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error),
+        },
+        errors: [{
+          stage: "formatting",
+          message: error instanceof Error ? error.message : String(error),
+          at: new Date().toISOString(),
+        }],
+      });
       logAgent(options ?? {}, "tool:contentFormatting:enqueueFailed", {
         snapshotId,
         count: evidenceItemIds.length,
@@ -1734,16 +2122,35 @@ async function completeSnapshotIfReady(
   const previewSignals = signals.filter((signal) => canGenerateSignalPreview(signal) && !signal.previewImage?.url);
 
   try {
-    await Promise.all(previewSignals.map((signal) => enqueueSignalPreviewImageJob({
+    const previewJobs = await Promise.all(previewSignals.map((signal) => enqueueSignalPreviewImageJob({
       snapshotId,
       signalId: signal.id,
     })));
+    await patchSnapshotPipeline(prisma, snapshotId, {
+      images: {
+        status: previewSignals.length ? "queued" : "completed",
+        previewsTotal: previewSignals.length,
+        previewsCompleted: 0,
+        previewJobIds: previewJobs.map((job) => String(job.id)),
+      },
+    });
 
     logAgent(options ?? {}, "tool:signalPreviewImages:enqueued", {
       snapshotId,
       count: previewSignals.length,
     });
   } catch (error) {
+    await patchSnapshotPipeline(prisma, snapshotId, {
+      images: {
+        status: "failed",
+        previewsError: error instanceof Error ? error.message : String(error),
+      },
+      errors: [{
+        stage: "signal-preview-images",
+        message: error instanceof Error ? error.message : String(error),
+        at: new Date().toISOString(),
+      }],
+    });
     logAgent(options ?? {}, "tool:signalPreviewImages:enqueueFailed", {
       snapshotId,
       count: previewSignals.length,

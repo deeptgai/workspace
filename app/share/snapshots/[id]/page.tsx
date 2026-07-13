@@ -4,7 +4,7 @@ import { isChannelSnapshotDocument } from "../../../../src/snapshots/sourceSnaps
 import { getSnapshot } from "../../../data";
 import { getSnapshotEvidenceMessages, getSnapshotPeople } from "../../../snapshots/snapshotViewData";
 import { SnapshotSeoContent } from "../../../snapshots/SnapshotSeoContent";
-import { SnapshotTabs } from "../../../snapshots/[id]/SnapshotTabs";
+import { SnapshotAppIsland } from "../../../snapshots/[id]/SnapshotAppIsland";
 import { snapshotMetadata } from "../../../snapshots/metadata";
 
 export const dynamic = "force-dynamic";
@@ -43,9 +43,9 @@ export default async function SharedSnapshotPage({ params }: SharedSnapshotPageP
 
   return (
     <main className="min-h-screen bg-[#f5f7f2] text-slate-950">
-      <div className="mx-auto w-full max-w-6xl px-4 py-4 md:px-6 md:py-6">
+      <div className="mx-auto w-full max-w-6xl px-2 py-3 sm:px-4 sm:py-4 md:px-6 md:py-6">
         <div className="motion-safe:animate-[snapshotFadeIn_520ms_ease-out]">
-          <SnapshotTabs
+          <SnapshotAppIsland
             snapshot={snapshot.document}
             evidenceMessages={evidenceMessages}
             people={getSnapshotPeople(snapshot)}

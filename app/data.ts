@@ -1,4 +1,12 @@
 import { prisma } from "../src/db/prisma";
+import {
+  CHANNEL_SNAPSHOT_SCHEMA_VERSION,
+  type ChannelSnapshotDocument,
+  type ChannelSnapshotHeroTheme,
+  type SnapshotGeneratedImage,
+  type SnapshotSignal,
+} from "../src/snapshots/sourceSnapshotSchema";
+import { sourceSlug } from "./sourceSlug";
 
 export async function getSourcesOverview() {
   const chats = await prisma.source.findMany({
@@ -191,7 +199,9 @@ export async function getSnapshot(snapshotId: string) {
     return null;
   }
 
-  const evidenceIds = collectEvidenceMessageIds(snapshot.document);
+  const document = await buildSnapshotReadModel(snapshot);
+
+  const evidenceIds = collectEvidenceMessageIds(document);
   const evidenceItems = evidenceIds.length === 0
     ? []
     : await prisma.contentItem.findMany({
@@ -329,12 +339,406 @@ export async function getSnapshot(snapshotId: string) {
 
   return {
     ...snapshot,
+    document,
     chat: snapshot.source,
     evidenceMessages: evidenceItems.map((message) => ({
       ...message,
       user: message.actor,
     })),
     topPeople,
+  };
+}
+
+async function findSourceBySlug(slug: string) {
+  const normalizedSlug = slug.trim().toLowerCase();
+  const sources = await prisma.source.findMany({
+    select: {
+      id: true,
+      provider: true,
+      externalId: true,
+      type: true,
+      title: true,
+      username: true,
+      url: true,
+      audienceCount: true,
+      metadata: true,
+      createdAt: true,
+      updatedAt: true,
+      lastImportAt: true,
+    },
+  });
+
+  return sources.find((source) => sourceSlug(source.username || source.title) === normalizedSlug) ??
+    sources.find((source) => source.id === slug) ??
+    null;
+}
+
+async function sourceSignalsAsDocumentSignals(sourceId: string): Promise<SnapshotSignal[]> {
+  const rows = await prisma.sourceSignal.findMany({
+    where: {
+      sourceId,
+      status: "active",
+    },
+    include: {
+      evidence: {
+        orderBy: {
+          createdAt: "asc",
+        },
+      },
+    },
+    orderBy: [
+      {
+        lastEvidenceAt: "desc",
+      },
+      {
+        updatedAt: "desc",
+      },
+    ],
+  });
+
+  return rows.map((row) => {
+    const metadata = recordObject(row.metadata);
+    const person = jsonObjectValue<SnapshotSignal["person"]>(metadata.person);
+    const metrics = jsonObjectValue<SnapshotSignal["metrics"]>(metadata.metrics);
+    const timeline = jsonObjectValue<SnapshotSignal["timeline"]>(metadata.timeline) ?? {
+      firstEvidenceAt: row.firstEvidenceAt?.toISOString(),
+      lastEvidenceAt: row.lastEvidenceAt?.toISOString(),
+      primaryEvidenceItemId: row.evidence[0]?.itemExternalId,
+    };
+
+    return {
+      id: row.id,
+      kind: row.kind as SnapshotSignal["kind"],
+      title: row.title,
+      summary: row.summary,
+      tags: Array.isArray(row.tags) ? row.tags.filter((tag): tag is string => typeof tag === "string") : [],
+      priority: row.score >= 8 ? "high" : row.score >= 5 ? "medium" : "low",
+      score: row.score ? String(row.score) : undefined,
+      confidence: row.confidence ?? undefined,
+      metrics: Array.isArray(metrics) ? metrics : undefined,
+      evidence: row.evidence.map((item) => ({
+        itemId: item.itemExternalId,
+        quote: item.quote ?? undefined,
+        reason: item.reason ?? undefined,
+      })),
+      person,
+      previewImage: jsonObjectValue<SnapshotSignal["previewImage"]>(row.previewImage),
+      timeline,
+    };
+  });
+}
+
+async function buildSourceReadModel(source: Awaited<ReturnType<typeof findSourceBySlug>>): Promise<ChannelSnapshotDocument | null> {
+  if (!source) {
+    return null;
+  }
+
+  const [signals, latestSnapshot] = await Promise.all([
+    sourceSignalsAsDocumentSignals(source.id),
+    prisma.sourceSnapshot.findFirst({
+      where: {
+        sourceId: source.id,
+        status: "completed",
+      },
+      orderBy: {
+        completedAt: "desc",
+      },
+      select: {
+        createdAt: true,
+        periodFrom: true,
+        periodTo: true,
+        summary: true,
+        heroTheme: true,
+        coverImage: true,
+      },
+    }),
+  ]);
+
+  if (!signals.length) {
+    return null;
+  }
+
+  return {
+    schemaVersion: CHANNEL_SNAPSHOT_SCHEMA_VERSION,
+    snapshotType: "channel",
+    title: `${source.title} — карта сигналов`,
+    sourceId: source.id,
+    chatTitle: source.title,
+    summary: latestSnapshot?.summary ?? null,
+    generatedAt: (latestSnapshot?.createdAt ?? new Date()).toISOString(),
+    period: {
+      from: latestSnapshot?.periodFrom?.toISOString() ?? null,
+      to: latestSnapshot?.periodTo?.toISOString() ?? null,
+    },
+    heroTheme: jsonObjectValue<ChannelSnapshotHeroTheme>(latestSnapshot?.heroTheme),
+    coverImage: jsonObjectValue<SnapshotGeneratedImage>(latestSnapshot?.coverImage),
+    signals,
+  };
+}
+
+async function buildSourceView(source: Awaited<ReturnType<typeof findSourceBySlug>>, document: ChannelSnapshotDocument) {
+  if (!source) {
+    return null;
+  }
+
+  const evidenceIds = collectEvidenceMessageIds(document);
+  const evidenceItems = evidenceIds.length === 0
+    ? []
+    : await prisma.contentItem.findMany({
+        where: {
+          sourceId: source.id,
+          externalId: {
+            in: evidenceIds,
+          },
+        },
+        include: {
+          actor: true,
+          formats: {
+            where: {
+              model: process.env.AI_MODEL || "unknown",
+            },
+            take: 1,
+          },
+        },
+      });
+  const peopleMessageKind = source.type === "group" ? "post" : "comment";
+  const topPeopleGroups = await prisma.contentItem.groupBy({
+    by: ["actorId"],
+    where: {
+      sourceId: source.id,
+      kind: peopleMessageKind,
+      actorId: {
+        not: null,
+      },
+    },
+    _count: {
+      _all: true,
+    },
+    _sum: {
+      reactionsTotal: true,
+      repliesCount: true,
+    },
+    _avg: {
+      engagementScore: true,
+    },
+    _max: {
+      publishedAt: true,
+    },
+    orderBy: {
+      _count: {
+        actorId: "desc",
+      },
+    },
+    take: 500,
+  });
+  const actorIds = topPeopleGroups.flatMap((group) => group.actorId ? [group.actorId] : []);
+  const [actors, exampleMessages] = await Promise.all([
+    actorIds.length
+      ? prisma.actor.findMany({
+          where: {
+            id: {
+              in: actorIds,
+            },
+          },
+          select: {
+            id: true,
+            externalId: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            photo: true,
+          },
+        })
+      : [],
+    actorIds.length
+      ? prisma.contentItem.findMany({
+          where: {
+            sourceId: source.id,
+            kind: peopleMessageKind,
+            actorId: {
+              in: actorIds,
+            },
+            text: {
+              not: null,
+            },
+          },
+          orderBy: {
+            engagementScore: "desc",
+          },
+          take: actorIds.length * 4,
+          select: {
+            actorId: true,
+            externalId: true,
+            text: true,
+            publishedAt: true,
+            parent: {
+              select: {
+                externalId: true,
+                text: true,
+                publishedAt: true,
+              },
+            },
+          },
+        })
+      : [],
+  ]);
+  const actorById = new Map(actors.map((actor) => [actor.id, actor]));
+  const examplesByActorId = new Map<string, typeof exampleMessages>();
+
+  for (const message of exampleMessages) {
+    if (!message.actorId) {
+      continue;
+    }
+
+    const examples = examplesByActorId.get(message.actorId) ?? [];
+
+    if (examples.length >= 2) {
+      continue;
+    }
+
+    examples.push(message);
+    examplesByActorId.set(message.actorId, examples);
+  }
+
+  const topPeople = topPeopleGroups.flatMap((group) => {
+    if (!group.actorId) {
+      return [];
+    }
+
+    return [{
+      user: actorById.get(group.actorId) ?? null,
+      comments: group._count._all,
+      reactions: group._sum.reactionsTotal ?? 0,
+      replies: group._sum.repliesCount ?? 0,
+      avgEngagement: group._avg.engagementScore ?? 0,
+      lastCommentAt: group._max.publishedAt,
+      examples: examplesByActorId.get(group.actorId) ?? [],
+    }];
+  });
+
+  return {
+    id: source.id,
+    sourceId: source.id,
+    title: document.title,
+    status: "completed",
+    document,
+    chat: source,
+    evidenceMessages: evidenceItems.map((message) => ({
+      ...message,
+      user: message.actor,
+    })),
+    topPeople,
+  };
+}
+
+export async function getSourceSignalMap(slug: string) {
+  const source = await findSourceBySlug(slug);
+  const document = await buildSourceReadModel(source);
+
+  if (!source || !document) {
+    return null;
+  }
+
+  return buildSourceView(source, document);
+}
+
+type SnapshotReadRecord = {
+  id: string;
+  sourceId: string;
+  title: string;
+  document: unknown;
+  periodFrom?: Date | null;
+  periodTo?: Date | null;
+  summary?: string | null;
+  heroTheme?: unknown;
+  coverImage?: unknown;
+  createdAt: Date;
+  source?: {
+    title: string;
+  } | null;
+};
+
+function recordObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value : undefined;
+}
+
+function jsonObjectValue<T>(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as T : undefined;
+}
+
+async function snapshotSignalsAsDocumentSignals(snapshotId: string): Promise<SnapshotSignal[]> {
+  const rows = await prisma.snapshotSignal.findMany({
+    where: {
+      snapshotId,
+    },
+    include: {
+      evidence: {
+        orderBy: {
+          position: "asc",
+        },
+      },
+    },
+    orderBy: [
+      {
+        sortAt: "desc",
+      },
+      {
+        createdAt: "asc",
+      },
+    ],
+  });
+
+  return rows.map((row) => ({
+    id: row.externalSignalId,
+    kind: row.kind as SnapshotSignal["kind"],
+    title: row.title,
+    summary: row.summary,
+    tags: Array.isArray(row.tags) ? row.tags.filter((tag): tag is string => typeof tag === "string") : [],
+    priority: row.priority as SnapshotSignal["priority"],
+    score: row.score ?? undefined,
+    confidence: row.confidence ?? undefined,
+    metrics: Array.isArray(row.metrics) ? row.metrics as SnapshotSignal["metrics"] : undefined,
+    evidence: row.evidence.map((item) => ({
+      itemId: item.itemExternalId,
+      quote: item.quote ?? undefined,
+      reason: item.reason ?? undefined,
+    })),
+    url: row.url ?? undefined,
+    person: jsonObjectValue<SnapshotSignal["person"]>(row.person),
+    previewImage: jsonObjectValue<SnapshotSignal["previewImage"]>(row.previewImage),
+    timeline: jsonObjectValue<SnapshotSignal["timeline"]>(row.timeline),
+  }));
+}
+
+async function buildSnapshotReadModel(snapshot: SnapshotReadRecord): Promise<ChannelSnapshotDocument | null> {
+  const signals = await snapshotSignalsAsDocumentSignals(snapshot.id);
+
+  if (!signals.length) {
+    return null;
+  }
+
+  const metadata = recordObject(snapshot.document);
+  const period = recordObject(metadata.period);
+
+  return {
+    schemaVersion: CHANNEL_SNAPSHOT_SCHEMA_VERSION,
+    snapshotType: "channel",
+    title: stringValue(metadata.title) ?? snapshot.title,
+    sourceId: stringValue(metadata.sourceId) ?? snapshot.sourceId,
+    chatTitle: stringValue(metadata.chatTitle) ?? snapshot.source?.title ?? snapshot.title.replace(/^Снимок по каналу:\s*/i, ""),
+    summary: stringValue(metadata.summary) ?? snapshot.summary ?? null,
+    generatedAt: stringValue(metadata.generatedAt) ?? snapshot.createdAt.toISOString(),
+    period: {
+      from: snapshot.periodFrom?.toISOString() ?? stringValue(period.from) ?? null,
+      to: snapshot.periodTo?.toISOString() ?? stringValue(period.to) ?? null,
+    },
+    heroTheme: jsonObjectValue<ChannelSnapshotHeroTheme>(snapshot.heroTheme) ?? jsonObjectValue<ChannelSnapshotHeroTheme>(metadata.heroTheme),
+    coverImage: jsonObjectValue<SnapshotGeneratedImage>(snapshot.coverImage) ?? jsonObjectValue<SnapshotGeneratedImage>(metadata.coverImage),
+    signals,
   };
 }
 

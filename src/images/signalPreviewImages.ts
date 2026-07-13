@@ -1,8 +1,7 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { putObject, stableObjectKey } from "../storage/objectStorage.js";
-import { isChannelSnapshotDocument, type SnapshotSignal, type SnapshotSignalPreviewImage } from "../snapshots/sourceSnapshotSchema.js";
+import type { SnapshotSignal, SnapshotSignalPreviewImage } from "../snapshots/sourceSnapshotSchema.js";
 import { canGenerateSignalPreview, generateSignalPreviewImage } from "./falSignalPreview.js";
-import { withSnapshotDocumentUpdateLock } from "./snapshotDocumentUpdateLock.js";
 
 export type SignalPreviewImageResult =
   | {
@@ -39,20 +38,57 @@ export async function generateAndStoreSignalPreviewImage(
     },
     include: {
       source: true,
+      signals: {
+        where: {
+          externalSignalId: signalId,
+        },
+        take: 1,
+      },
     },
   });
 
-  if (!snapshot || !isChannelSnapshotDocument(snapshot.document)) {
-    throw new Error(`Snapshot document not found or not completed: ${snapshotId}`);
+  if (!snapshot) {
+    throw new Error(`Snapshot not found: ${snapshotId}`);
   }
 
-  const signal = snapshot.document.signals.find((item) => item.id === signalId);
+  const tableSignal = snapshot.signals[0] ?? null;
+  const signal = tableSignal
+    ? {
+        id: tableSignal.externalSignalId,
+        kind: tableSignal.kind as SnapshotSignal["kind"],
+        title: tableSignal.title,
+        summary: tableSignal.summary,
+        tags: Array.isArray(tableSignal.tags) ? tableSignal.tags.filter((tag): tag is string => typeof tag === "string") : [],
+        priority: tableSignal.priority as SnapshotSignal["priority"],
+        score: tableSignal.score ?? undefined,
+        confidence: tableSignal.confidence ?? undefined,
+        metrics: Array.isArray(tableSignal.metrics) ? tableSignal.metrics as SnapshotSignal["metrics"] : undefined,
+        evidence: [],
+        url: tableSignal.url ?? undefined,
+        person: tableSignal.person && typeof tableSignal.person === "object" && !Array.isArray(tableSignal.person)
+          ? tableSignal.person as SnapshotSignal["person"]
+          : undefined,
+        previewImage: tableSignal.previewImage && typeof tableSignal.previewImage === "object" && !Array.isArray(tableSignal.previewImage)
+          ? tableSignal.previewImage as SnapshotSignal["previewImage"]
+          : undefined,
+        timeline: tableSignal.timeline && typeof tableSignal.timeline === "object" && !Array.isArray(tableSignal.timeline)
+          ? tableSignal.timeline as SnapshotSignal["timeline"]
+          : undefined,
+      } satisfies SnapshotSignal
+    : null;
 
   if (!signal) {
     throw new Error(`Signal not found in snapshot ${snapshotId}: ${signalId}`);
   }
 
-  if (skipExisting && signal.previewImage?.url) {
+  const existingPreviewImage = tableSignal?.previewImage &&
+    typeof tableSignal.previewImage === "object" &&
+    !Array.isArray(tableSignal.previewImage) &&
+    typeof tableSignal.previewImage.url === "string"
+    ? tableSignal.previewImage
+    : undefined;
+
+  if (skipExisting && existingPreviewImage?.url) {
     return {
       status: "skipped",
       snapshotId,
@@ -99,39 +135,25 @@ export async function generateAndStoreSignalPreviewImage(
     contentType: storedObject.contentType,
   };
 
-  await withSnapshotDocumentUpdateLock(snapshotId, async () => {
-    const latestSnapshot = await prisma.sourceSnapshot.findUnique({
+  await prisma.snapshotSignal.update({
+    where: {
+      id: tableSignal.id,
+    },
+    data: {
+      previewImage: storedPreviewImage as Prisma.InputJsonValue,
+    },
+  });
+
+  if (tableSignal.sourceSignalId) {
+    await prisma.sourceSignal.update({
       where: {
-        id: snapshotId,
-      },
-      select: {
-        document: true,
-      },
-    });
-
-    if (!latestSnapshot || !isChannelSnapshotDocument(latestSnapshot.document)) {
-      throw new Error(`Snapshot document not found while saving signal image: ${snapshotId}`);
-    }
-
-    const updatedDocument = {
-      ...latestSnapshot.document,
-      signals: latestSnapshot.document.signals.map((item) => item.id === signalId
-        ? {
-            ...item,
-            previewImage: storedPreviewImage,
-          }
-        : item),
-    };
-
-    await prisma.sourceSnapshot.update({
-      where: {
-        id: snapshotId,
+        id: tableSignal.sourceSignalId,
       },
       data: {
-        document: updatedDocument as Prisma.InputJsonValue,
+        previewImage: storedPreviewImage as Prisma.InputJsonValue,
       },
     });
-  });
+  }
 
   return {
     status: "generated",

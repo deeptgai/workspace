@@ -1,6 +1,6 @@
 import type { TelegramClient } from "telegram";
 import { Api } from "telegram";
-import type { ResolvedDialogEntity } from "./dialogs.js";
+import type { ResolvedDialogEntity } from "./dialogs.ts";
 
 export type MessageInfo = {
   id: number;

@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
-import { TelegramClient } from "telegram";
-import { StringSession } from "telegram/sessions/index.js";
 import { loadConfig } from "../../../src/config";
 import { prisma } from "../../../src/db/prisma";
-import { listDialogs } from "../../../src/telegram/dialogs";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET() {
   const config = loadConfig();
+  const [{ TelegramClient }, { StringSession }, { listDialogs }] = await Promise.all([
+    import("telegram"),
+    import("telegram/sessions/index.js"),
+    import("../../../src/telegram/dialogs"),
+  ]);
   const client = new TelegramClient(
     new StringSession(config.telegram.session),
     config.telegram.apiId,

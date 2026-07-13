@@ -9,7 +9,7 @@ import { findStoredSource } from "./db/sources.js";
 import { prisma } from "./db/prisma.js";
 import { backfillEngagementFromRawJson } from "./engagement/rawJson.js";
 import type { ImportMode } from "./import/importMessages.js";
-import { isChannelSnapshotDocument } from "./snapshots/sourceSnapshotSchema.js";
+import { initialSnapshotPipeline } from "./snapshots/pipeline.js";
 
 const program = new Command();
 
@@ -51,6 +51,16 @@ function sinceDateIsoFromDays(days: number): string | undefined {
   }
 
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function parseDateOption(value: string, name: string): Date {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`${name} must be a valid date or ISO datetime.`);
+  }
+
+  return date;
 }
 
 function parseOptionalNonNegativeNumber(value: string | undefined, name: string): number | undefined {
@@ -184,6 +194,144 @@ program
       chat,
       mode,
     }]);
+  });
+
+program
+  .command("import:range")
+  .description("Import Telegram posts from a source within an exact date range")
+  .argument("<chat>", "Source id, exact title, username, or @username")
+  .requiredOption("--from <date>", "Inclusive start date, e.g. 2025-01-01")
+  .requiredOption("--to <date>", "Inclusive end date, e.g. 2025-12-31T23:59:59Z")
+  .option("-l, --limit <number>", "Maximum number of Telegram messages to scan", "2000")
+  .option("-b, --batch-size <number>", "Messages per Telegram request", getDefaultBatchSize())
+  .option("-s, --sleep-ms <number>", "Pause between batches in milliseconds", getDefaultSleepMs())
+  .action(async (
+    chat: string,
+    options: {
+      from: string;
+      to: string;
+      limit: string;
+      batchSize: string;
+      sleepMs: string;
+    },
+  ) => {
+    const from = parseDateOption(options.from, "--from");
+    const to = parseDateOption(options.to, "--to");
+
+    if (from.getTime() > to.getTime()) {
+      throw new Error("--from must be before --to.");
+    }
+
+    const { enqueueTelegramImportJob } = await import("./queue/enqueue.js");
+    const job = await enqueueTelegramImportJob({
+      chat,
+      mode: "sync",
+      limit: parsePositiveInteger(options.limit, "--limit"),
+      batchSize: parsePositiveInteger(options.batchSize, "--batch-size"),
+      sleepMs: parseNonNegativeInteger(options.sleepMs, "--sleep-ms"),
+      sinceDateIso: from.toISOString(),
+      untilDateIso: to.toISOString(),
+    });
+
+    console.log("");
+    console.log("Range import job enqueued.");
+    console.table([{
+      queue: "telegram-import",
+      jobId: job.id,
+      chat,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      embeddings: "auto",
+    }]);
+  });
+
+program
+  .command("source:purge")
+  .description("Delete local stored content, embeddings, snapshots, and signals for one source")
+  .argument("<chat>", "Stored source id, exact title, username, or @username")
+  .option("--all", "Delete content, embeddings, snapshots, signals, formats, and import state")
+  .action(async (chat: string, options: { all?: boolean }) => {
+    if (!options.all) {
+      throw new Error("Pass --all to confirm destructive source purge.");
+    }
+
+    try {
+      const storedChat = await findStoredSource(prisma, chat);
+
+      if (!storedChat) {
+        throw new Error(`Source not found in database: ${chat}`);
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        const sourceSignalEvidence = await tx.sourceSignalEvidence.deleteMany({
+          where: {
+            sourceSignal: {
+              sourceId: storedChat.id,
+            },
+          },
+        });
+        const sourceSignals = await tx.sourceSignal.deleteMany({
+          where: {
+            sourceId: storedChat.id,
+          },
+        });
+        const snapshotSignalEvidence = await tx.snapshotSignalEvidence.deleteMany({
+          where: {
+            snapshotSignal: {
+              sourceId: storedChat.id,
+            },
+          },
+        });
+        const snapshotSignals = await tx.snapshotSignal.deleteMany({
+          where: {
+            sourceId: storedChat.id,
+          },
+        });
+        const sections = await tx.sourceSnapshotSection.deleteMany({
+          where: {
+            snapshot: {
+              sourceId: storedChat.id,
+            },
+          },
+        });
+        const snapshots = await tx.sourceSnapshot.deleteMany({
+          where: {
+            sourceId: storedChat.id,
+          },
+        });
+        const importStates = await tx.sourceImportState.deleteMany({
+          where: {
+            sourceId: storedChat.id,
+          },
+        });
+        const content = await tx.contentItem.deleteMany({
+          where: {
+            sourceId: storedChat.id,
+          },
+        });
+
+        return {
+          sourceSignalEvidence: sourceSignalEvidence.count,
+          sourceSignals: sourceSignals.count,
+          snapshotSignalEvidence: snapshotSignalEvidence.count,
+          snapshotSignals: snapshotSignals.count,
+          sections: sections.count,
+          snapshots: snapshots.count,
+          importStates: importStates.count,
+          content: content.count,
+        };
+      });
+
+      console.log("");
+      console.log("Source purged.");
+      console.table([{
+        sourceId: storedChat.id,
+        title: storedChat.title,
+        ...result,
+      }]);
+    } finally {
+      await prisma.$disconnect();
+    }
   });
 
 program
@@ -328,6 +476,106 @@ program
   });
 
 program
+  .command("source:state")
+  .description("Show integration-test state for a stored source")
+  .argument("<chat>", "Stored source id, exact title, username, or @username")
+  .action(async (chat: string) => {
+    try {
+      const storedChat = await findStoredSource(prisma, chat);
+
+      if (!storedChat) {
+        throw new Error(`Source not found in database: ${chat}`);
+      }
+
+      const [
+        posts,
+        comments,
+        embeddings,
+        formats,
+        snapshots,
+        sections,
+        snapshotSignals,
+        snapshotEvidence,
+        sourceSignals,
+        sourceEvidence,
+        pendingSnapshotSignals,
+      ] = await Promise.all([
+        prisma.contentItem.count({ where: { sourceId: storedChat.id, kind: "post" } }),
+        prisma.contentItem.count({ where: { sourceId: storedChat.id, kind: "comment" } }),
+        prisma.contentEmbedding.count({ where: { item: { sourceId: storedChat.id } } }),
+        prisma.contentItemFormat.count({ where: { item: { sourceId: storedChat.id } } }),
+        prisma.sourceSnapshot.count({ where: { sourceId: storedChat.id } }),
+        prisma.sourceSnapshotSection.count({ where: { snapshot: { sourceId: storedChat.id } } }),
+        prisma.snapshotSignal.count({ where: { sourceId: storedChat.id } }),
+        prisma.snapshotSignalEvidence.count({ where: { snapshotSignal: { sourceId: storedChat.id } } }),
+        prisma.sourceSignal.count({ where: { sourceId: storedChat.id } }),
+        prisma.sourceSignalEvidence.count({ where: { sourceSignal: { sourceId: storedChat.id } } }),
+        prisma.snapshotSignal.count({ where: { sourceId: storedChat.id, status: "pending" } }),
+      ]);
+      const latestSnapshot = await prisma.sourceSnapshot.findFirst({
+        where: {
+          sourceId: storedChat.id,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+        select: {
+          id: true,
+          status: true,
+          periodFrom: true,
+          periodTo: true,
+          createdAt: true,
+          completedAt: true,
+          pipeline: true,
+        },
+      });
+      const latestPipeline = latestSnapshot?.pipeline &&
+        typeof latestSnapshot.pipeline === "object" &&
+        !Array.isArray(latestSnapshot.pipeline)
+        ? latestSnapshot.pipeline as Record<string, unknown>
+        : {};
+      const latestPipelineCuration = latestPipeline.curation &&
+        typeof latestPipeline.curation === "object" &&
+        !Array.isArray(latestPipeline.curation)
+        ? latestPipeline.curation as Record<string, unknown>
+        : {};
+      const latestPipelineImages = latestPipeline.images &&
+        typeof latestPipeline.images === "object" &&
+        !Array.isArray(latestPipeline.images)
+        ? latestPipeline.images as Record<string, unknown>
+        : {};
+
+      console.log("");
+      console.log("Source state.");
+      console.table([{
+        sourceId: storedChat.id,
+        title: storedChat.title,
+        username: storedChat.username ? `@${storedChat.username}` : "",
+        posts,
+        comments,
+        embeddings,
+        formats,
+        snapshots,
+        sections,
+        snapshotSignals,
+        snapshotEvidence,
+        sourceSignals,
+        sourceEvidence,
+        pendingSnapshotSignals,
+        latestSnapshotId: latestSnapshot?.id,
+        latestSnapshotStatus: latestSnapshot?.status,
+        latestPipelineStatus: latestPipeline.status,
+        latestCurationStatus: latestPipelineCuration.status,
+        latestImagesStatus: latestPipelineImages.status,
+        latestPeriodFrom: latestSnapshot?.periodFrom?.toISOString(),
+        latestPeriodTo: latestSnapshot?.periodTo?.toISOString(),
+      }]);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+program
   .command("embed")
   .description("Enqueue embedding creation for stored messages in a chat or channel")
   .argument("<chat>", "Stored chat id, exact title, username, or @username")
@@ -449,13 +697,16 @@ program
     const queues = createQueues();
 
     try {
-      const [importCounts, commentImportCounts, embeddingCounts, formattingCounts, snapshotCounts, snapshotSectionCounts] = await Promise.all([
+      const [importCounts, commentImportCounts, embeddingCounts, formattingCounts, snapshotCounts, snapshotSectionCounts, curationCounts, coverImageCounts, previewImageCounts] = await Promise.all([
         queues.telegramImportQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
         queues.commentImportQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
         queues.contentEmbeddingQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
         queues.contentFormattingQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
         queues.sourceSnapshotQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
         queues.sourceSnapshotSectionQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
+        queues.sourceSignalCurationQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
+        queues.snapshotCoverImageQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
+        queues.signalPreviewImageQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
       ]);
 
       console.table([
@@ -483,6 +734,18 @@ program
           queue: "source-snapshot-section",
           ...snapshotSectionCounts,
         },
+        {
+          queue: "source-signal-curation",
+          ...curationCounts,
+        },
+        {
+          queue: "snapshot-cover-image",
+          ...coverImageCounts,
+        },
+        {
+          queue: "signal-preview-image",
+          ...previewImageCounts,
+        },
       ]);
 
       const activeJobs = [
@@ -492,6 +755,9 @@ program
         ...await queues.contentFormattingQueue.getActive(),
         ...await queues.sourceSnapshotQueue.getActive(),
         ...await queues.sourceSnapshotSectionQueue.getActive(),
+        ...await queues.sourceSignalCurationQueue.getActive(),
+        ...await queues.snapshotCoverImageQueue.getActive(),
+        ...await queues.signalPreviewImageQueue.getActive(),
       ];
 
       if (activeJobs.length > 0) {
@@ -511,6 +777,7 @@ program
       await queues.contentFormattingQueue.close();
       await queues.sourceSnapshotQueue.close();
       await queues.sourceSnapshotSectionQueue.close();
+      await queues.sourceSignalCurationQueue.close();
       await queues.snapshotCoverImageQueue.close();
       await queues.signalPreviewImageQueue.close();
     }
@@ -586,6 +853,10 @@ program
           title: `Снимок по каналу: ${storedChat.title}`,
           status: "pending",
           model: process.env.AI_MODEL || "unknown",
+          pipeline: initialSnapshotPipeline({
+            startedBy: "cli",
+            model: process.env.AI_MODEL || "unknown",
+          }),
         },
       });
       const { enqueueSourceSnapshotJob } = await import("./queue/enqueue.js");
@@ -602,6 +873,93 @@ program
         snapshotId: snapshot.id,
         chat,
       }]);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+program
+  .command("snapshot:summary")
+  .description("Run ChannelSummaryAgent and store the top-level channel summary for a completed source snapshot")
+  .argument("<target>", "Stored chat id/title/username/@username, or a snapshot id")
+  .option("-s, --snapshot-id <snapshotId>", "Use an explicit snapshot id instead of resolving target as a source")
+  .option("--verbose", "Print agent logs")
+  .action(async (
+    target: string,
+    options: {
+      snapshotId?: string;
+      verbose?: boolean;
+    },
+  ) => {
+    try {
+      let snapshotId = options.snapshotId;
+
+      if (!snapshotId) {
+        const directSnapshot = await prisma.sourceSnapshot.findUnique({
+          where: {
+            id: target,
+          },
+          select: {
+            id: true,
+            source: {
+              select: {
+                title: true,
+              },
+            },
+          },
+        });
+
+        if (directSnapshot) {
+          snapshotId = directSnapshot.id;
+        } else {
+          const storedChat = await findStoredSource(prisma, target);
+
+          if (!storedChat) {
+            throw new Error(`Source or snapshot not found in database: ${target}`);
+          }
+
+          const latestSnapshot = await prisma.sourceSnapshot.findFirst({
+            where: {
+              sourceId: storedChat.id,
+              kind: "channel_structured_snapshot",
+              status: "completed",
+            },
+            orderBy: {
+              createdAt: "desc",
+            },
+            select: {
+              id: true,
+            },
+          });
+
+          if (!latestSnapshot) {
+            throw new Error(`Completed snapshot not found for ${storedChat.title}.`);
+          }
+
+          snapshotId = latestSnapshot.id;
+        }
+      }
+
+      const { loadAiConfig } = await import("./ai/config.js");
+      const { generateAndStoreSnapshotSummary } = await import("./snapshots/communitySnapshot.js");
+      const result = await generateAndStoreSnapshotSummary(prisma, loadAiConfig(), snapshotId, {
+        onLog: options.verbose
+          ? (message, meta) => {
+              console.error(message, meta ?? {});
+            }
+          : undefined,
+      });
+
+      console.log("");
+      console.log("Snapshot channel summary generated.");
+      console.table([{
+        snapshotId: result.snapshotId,
+        sourceId: result.sourceId,
+        sourceTitle: result.sourceTitle,
+        previousChars: result.previousSummary?.length ?? 0,
+        chars: result.summary.length,
+      }]);
+      console.log(result.summary);
     } finally {
       await prisma.$disconnect();
     }
@@ -693,8 +1051,75 @@ program
   });
 
 program
+  .command("signals:curate")
+  .description("Enqueue source-signal curation for a completed source snapshot")
+  .argument("<snapshotId>", "Completed source snapshot id")
+  .action(async (snapshotId: string) => {
+    try {
+      const snapshot = await prisma.sourceSnapshot.findUnique({
+        where: {
+          id: snapshotId,
+        },
+        select: {
+          id: true,
+          status: true,
+        },
+      });
+
+      if (!snapshot) {
+        throw new Error(`Snapshot not found: ${snapshotId}`);
+      }
+
+      const { enqueueSourceSignalCurationJob } = await import("./queue/enqueue.js");
+      const job = await enqueueSourceSignalCurationJob({
+        snapshotId,
+      });
+
+      console.log("");
+      console.log("Source signal curation job enqueued.");
+      console.table([{
+        queue: "source-signal-curation",
+        jobId: job.id,
+        snapshotId,
+      }]);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+program
+  .command("signals:curate:run")
+  .description("Run source-signal curation synchronously for debugging")
+  .argument("<snapshotId>", "Completed source snapshot id")
+  .option("-l, --limit <number>", "Process at most N pending snapshot signals")
+  .action(async (
+    snapshotId: string,
+    options: {
+      limit?: string;
+    },
+  ) => {
+    try {
+      const { curateSnapshotSignalsIntoSource } = await import("./signals/sourceSignalCurator.js");
+      const { loadAiConfig } = await import("./ai/config.js");
+      const limit = options.limit ? parsePositiveInteger(options.limit, "--limit") : undefined;
+      const result = await curateSnapshotSignalsIntoSource(prisma, loadAiConfig(), snapshotId, {
+        limit,
+        onProgress: (progress) => {
+          console.log(`[signals:curate] ${progress.processed}/${progress.total} ${progress.decision} ${progress.signalId}`);
+        },
+      });
+
+      console.log("");
+      console.log("Snapshot signals curated into source signals.");
+      console.table([result]);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+program
   .command("snapshot:image")
-  .description("Generate a fal.ai cover image for a completed snapshot and save it into the snapshot document")
+  .description("Generate a fal.ai cover image for a completed snapshot")
   .argument("[snapshotId]", "Stored snapshot id. Defaults to the latest completed snapshot.")
   .action(async (snapshotId: string | undefined) => {
     try {
@@ -702,9 +1127,6 @@ program
         where: {
           id: snapshotId,
           status: "completed",
-          document: {
-            not: Prisma.JsonNull,
-          },
         },
         include: {
           source: true,
@@ -714,7 +1136,7 @@ program
         },
       });
 
-      if (!snapshot || !isChannelSnapshotDocument(snapshot.document)) {
+      if (!snapshot) {
         throw new Error(snapshotId
           ? `Completed channel snapshot not found: ${snapshotId}`
           : "No completed channel snapshots found.");
@@ -753,8 +1175,8 @@ program
 
 program
   .command("signal:image")
-  .description("Generate a fal.ai preview image for one signal id and save it into the snapshot document")
-  .argument("<signalId>", "Signal id from snapshot.document.signals[].id")
+  .description("Generate a fal.ai preview image for one snapshot signal id")
+  .argument("<signalId>", "SnapshotSignal.externalSignalId")
   .option("-s, --snapshot <snapshotId>", "Restrict lookup to one snapshot id")
   .action(async (
     signalId: string,
@@ -763,38 +1185,29 @@ program
     },
   ) => {
     try {
-      const snapshots = await prisma.sourceSnapshot.findMany({
+      const snapshotSignal = await prisma.snapshotSignal.findFirst({
         where: {
-          id: options.snapshot,
-          status: "completed",
-          document: {
-            not: Prisma.JsonNull,
+          snapshotId: options.snapshot,
+          externalSignalId: signalId,
+          snapshot: {
+            status: "completed",
           },
         },
         include: {
-          source: true,
+          snapshot: true,
         },
         orderBy: {
           createdAt: "desc",
         },
-        take: options.snapshot ? 1 : 50,
       });
 
-      const snapshot = snapshots.find((candidate) => {
-        if (!isChannelSnapshotDocument(candidate.document)) {
-          return false;
-        }
-
-        return candidate.document.signals.some((signal) => signal.id === signalId);
-      });
-
-      if (!snapshot || !isChannelSnapshotDocument(snapshot.document)) {
+      if (!snapshotSignal) {
         const scope = options.snapshot ? ` in snapshot ${options.snapshot}` : " in the latest completed snapshots";
         throw new Error(`Signal not found${scope}: ${signalId}`);
       }
 
       const { generateAndStoreSignalPreviewImage } = await import("./images/signalPreviewImages.js");
-      const result = await generateAndStoreSignalPreviewImage(prisma, snapshot.id, signalId, {
+      const result = await generateAndStoreSignalPreviewImage(prisma, snapshotSignal.snapshotId, signalId, {
         skipExisting: false,
       });
 
@@ -802,7 +1215,7 @@ program
         console.log("");
         console.log("Signal preview image skipped.");
         console.table([{
-          snapshotId: snapshot.id,
+          snapshotId: snapshotSignal.snapshotId,
           signalId,
           kind: result.kind,
           title: result.title,
@@ -814,7 +1227,7 @@ program
       console.log("");
       console.log("Signal preview image generated.");
       console.table([{
-        snapshotId: snapshot.id,
+        snapshotId: snapshotSignal.snapshotId,
         signalId,
         kind: result.kind,
         title: result.title,
@@ -838,15 +1251,20 @@ program
         where: {
           id: snapshotId,
         },
+        select: {
+          id: true,
+        },
       });
 
-      if (!snapshot || !isChannelSnapshotDocument(snapshot.document)) {
-        throw new Error(`Snapshot document not found or not completed: ${snapshotId}`);
+      if (!snapshot) {
+        throw new Error(`Snapshot not found: ${snapshotId}`);
       }
 
       const { canGenerateSignalPreview } = await import("./images/falSignalPreview.js");
       const { enqueueSignalPreviewImageJob } = await import("./queue/enqueue.js");
-      const signals = snapshot.document.signals.filter((signal) => canGenerateSignalPreview(signal) && !signal.previewImage?.url);
+      const { snapshotSignalsAsDocumentSignals } = await import("./signals/snapshotSignals.js");
+      const signals = (await snapshotSignalsAsDocumentSignals(prisma, snapshotId))
+        .filter((signal) => canGenerateSignalPreview(signal) && !signal.previewImage?.url);
       const jobs = await Promise.all(signals.map((signal) => enqueueSignalPreviewImageJob({
         snapshotId,
         signalId: signal.id,
@@ -857,7 +1275,7 @@ program
       console.table([{
         snapshotId,
         enqueued: jobs.length,
-        totalSignals: snapshot.document.signals.length,
+        totalSignals: signals.length,
       }]);
     } finally {
       await prisma.$disconnect();
@@ -883,7 +1301,7 @@ program
 
 program
   .command("snapshot:timeline")
-  .description("Backfill signal timeline fields for completed snapshot documents")
+  .description("Backfill signal timeline fields for normalized snapshot signals")
   .option("-s, --snapshot <snapshotId>", "Restrict backfill to one snapshot id")
   .action(async (options: { snapshot?: string }) => {
     try {
@@ -891,37 +1309,39 @@ program
         where: {
           id: options.snapshot,
           status: "completed",
-          document: {
-            not: Prisma.JsonNull,
-          },
+        },
+        select: {
+          id: true,
+          sourceId: true,
         },
         orderBy: {
           createdAt: "desc",
         },
       });
       const { enrichSignalsWithTimeline } = await import("./snapshots/signalTimeline.js");
+      const { snapshotSignalsAsDocumentSignals } = await import("./signals/snapshotSignals.js");
       let updated = 0;
       let skipped = 0;
 
       for (const snapshot of snapshots) {
-        if (!isChannelSnapshotDocument(snapshot.document)) {
+        const currentSignals = await snapshotSignalsAsDocumentSignals(prisma, snapshot.id);
+
+        if (!currentSignals.length) {
           skipped += 1;
           continue;
         }
 
-        const signals = await enrichSignalsWithTimeline(prisma, snapshot.sourceId, snapshot.document.signals);
+        const signals = await enrichSignalsWithTimeline(prisma, snapshot.sourceId, currentSignals);
 
-        await prisma.sourceSnapshot.update({
+        await Promise.all(signals.map((signal) => prisma.snapshotSignal.updateMany({
           where: {
-            id: snapshot.id,
+            snapshotId: snapshot.id,
+            externalSignalId: signal.id,
           },
           data: {
-            document: {
-              ...snapshot.document,
-              signals,
-            } satisfies Prisma.InputJsonValue,
+            timeline: signal.timeline ? signal.timeline satisfies Prisma.InputJsonValue : Prisma.JsonNull,
           },
-        });
+        })));
         updated += 1;
       }
 
@@ -944,13 +1364,14 @@ program
   .action(async (options: { snapshot?: string }) => {
     try {
       const { canGenerateSignalPreview } = await import("./images/falSignalPreview.js");
+      const { snapshotSignalsAsDocumentSignals } = await import("./signals/snapshotSignals.js");
       const snapshots = await prisma.sourceSnapshot.findMany({
         where: {
           id: options.snapshot,
           status: "completed",
-          document: {
-            not: Prisma.JsonNull,
-          },
+        },
+        select: {
+          id: true,
         },
         orderBy: {
           createdAt: "desc",
@@ -960,37 +1381,27 @@ program
       let removedPreviews = 0;
 
       for (const snapshot of snapshots) {
-        if (!isChannelSnapshotDocument(snapshot.document)) {
+        const signals = await snapshotSignalsAsDocumentSignals(prisma, snapshot.id);
+        const unsupportedSignalIds = signals
+          .filter((signal) => !canGenerateSignalPreview(signal) && signal.previewImage?.url)
+          .map((signal) => signal.id);
+
+        if (!unsupportedSignalIds.length) {
           continue;
         }
 
-        let changed = false;
-        const signals = snapshot.document.signals.map((signal) => {
-          if (canGenerateSignalPreview(signal) || !signal.previewImage) {
-            return signal;
-          }
-
-          changed = true;
-          removedPreviews += 1;
-          const { previewImage: _previewImage, ...rest } = signal;
-          return rest;
-        });
-
-        if (!changed) {
-          continue;
-        }
-
-        await prisma.sourceSnapshot.update({
+        await prisma.snapshotSignal.updateMany({
           where: {
-            id: snapshot.id,
+            snapshotId: snapshot.id,
+            externalSignalId: {
+              in: unsupportedSignalIds,
+            },
           },
           data: {
-            document: {
-              ...snapshot.document,
-              signals,
-            } satisfies Prisma.InputJsonValue,
+            previewImage: Prisma.JsonNull,
           },
         });
+        removedPreviews += unsupportedSignalIds.length;
         updatedSnapshots += 1;
       }
 
@@ -1103,6 +1514,79 @@ program
       const { writeFile } = await import("node:fs/promises");
       await writeFile(outputPath, exported.markdown, "utf8");
       console.log(`Exported ${storedChat.title} to ${outputPath}`);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+program
+  .command("payments:revoke")
+  .description("Delete Telegram Stars access for a stored Telegram user")
+  .argument("<user>", "Telegram username, @username, or numeric telegram id")
+  .option("--product <product>", "Limit to a product, e.g. tools-section")
+  .option("--source <sourceId>", "Limit to a source id")
+  .option("--status <status>", "Purchase status to delete: paid, pending, or all", "paid")
+  .action(async (
+    user: string,
+    options: {
+      product?: string;
+      source?: string;
+      status: string;
+    },
+  ) => {
+    try {
+      const normalizedUser = user.trim().replace(/^@/, "");
+      const telegramId = /^\d+$/.test(normalizedUser) ? BigInt(normalizedUser) : null;
+      const telegramUser = await prisma.telegramUser.findFirst({
+        where: telegramId
+          ? { telegramId }
+          : { username: normalizedUser },
+      });
+
+      if (!telegramUser) {
+        throw new Error(`Telegram user not found: ${user}`);
+      }
+
+      if (!["paid", "pending", "all"].includes(options.status)) {
+        throw new Error("--status must be one of: paid, pending, all.");
+      }
+
+      const deleteWhere = {
+        telegramId: telegramUser.telegramId,
+        ...(options.product ? { product: options.product } : {}),
+        ...(options.source ? { sourceId: options.source } : {}),
+        ...(options.status === "all" ? {} : { status: options.status }),
+      };
+      const before = await prisma.telegramPurchase.findMany({
+        where: deleteWhere,
+        orderBy: {
+          updatedAt: "desc",
+        },
+        select: {
+          id: true,
+          product: true,
+          sourceId: true,
+          status: true,
+          amount: true,
+          paidAt: true,
+        },
+      });
+      const deleted = await prisma.telegramPurchase.deleteMany({
+        where: deleteWhere,
+      });
+
+      console.log(`Revoked ${deleted.count} purchase(s) for @${telegramUser.username ?? telegramUser.telegramId.toString()}.`);
+
+      if (before.length) {
+        console.table(before.map((purchase) => ({
+          id: purchase.id,
+          product: purchase.product,
+          sourceId: purchase.sourceId,
+          status: purchase.status,
+          amount: purchase.amount,
+          paidAt: purchase.paidAt?.toISOString() ?? "",
+        })));
+      }
     } finally {
       await prisma.$disconnect();
     }

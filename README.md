@@ -43,6 +43,93 @@ The command prints a `TELEGRAM_SESSION` value. Put it into `.env`:
 TELEGRAM_SESSION=...
 ```
 
+## Telegram Bot Webhook
+
+Create a bot in BotFather and add the token to `.env`:
+
+```text
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_BOT_USERNAME=deep_signals_bot
+TELEGRAM_SESSION_SECRET=
+TELEGRAM_WEBHOOK_PORT=8787
+TELEGRAM_WEBHOOK_PATH=/telegram/webhook
+TELEGRAM_WEBHOOK_SECRET_TOKEN=
+TELEGRAM_MINI_APP_URL=
+```
+
+For local development, use a Cloudflare named tunnel with two hostnames:
+
+```text
+local.tgdeep.xyz -> http://localhost:3000
+bot-local.tgdeep.xyz -> http://localhost:8787
+```
+
+Then start the bot:
+
+```bash
+npm run tgbot
+```
+
+The bot registers `TELEGRAM_WEBHOOK_URL` with Telegram on startup and listens on:
+
+```text
+POST /telegram/webhook
+GET /health
+```
+
+Use these values for the local named tunnel:
+
+```text
+TELEGRAM_WEBHOOK_URL=https://bot-local.tgdeep.xyz
+TELEGRAM_MINI_APP_URL=https://local.tgdeep.xyz/s
+TELEGRAM_PEOPLE_SECTION_PRICE_STARS=1
+TELEGRAM_TOOLS_SECTION_PRICE_STARS=1
+```
+
+Use this URL as the Mini App URL in BotFather:
+
+```text
+https://local.tgdeep.xyz/s
+```
+
+With the `signals_web` short name, publish channel links like this:
+
+```text
+https://t.me/deep_signals_bot/signals_web?startapp=anatoly-tolkit
+```
+
+The `Люди` and `Инструменты` sections are paid via Telegram Stars. The Mini App creates a Stars invoice from the Next API, opens it with `WebApp.openInvoice`, and the bot webhook marks access as paid after `successful_payment`.
+
+For browser login with Telegram, link the domain with the bot in BotFather:
+
+```text
+/setdomain -> @deep_signals_bot -> local.tgdeep.xyz
+```
+
+Then browser users can open `/auth/telegram?returnTo=/s/anatoly-tolkit`, log in with the Telegram Login Widget, and receive the same signed session cookie used by the Mini App.
+
+If BotFather shows Web Login Client ID and Client Secret, add them to `.env` to use the modern OIDC redirect flow instead of the legacy iframe widget:
+
+```text
+TELEGRAM_LOGIN_CLIENT_ID=
+TELEGRAM_LOGIN_CLIENT_SECRET=
+```
+
+The login page must be opened through the linked domain, not `localhost`:
+
+```text
+https://local.tgdeep.xyz/auth/telegram?returnTo=/s/anatoly-tolkit
+```
+
+Local dev shortcuts:
+
+```bash
+make web
+make bot
+make tunnel
+make health
+```
+
 ## CLI Commands
 
 List chats and channels:
