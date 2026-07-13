@@ -77,6 +77,77 @@ function parseOptionalNonNegativeNumber(value: string | undefined, name: string)
   return parsedValue;
 }
 
+async function findTelegramUserByRef(user: string) {
+  const normalizedUser = user.trim().replace(/^@/, "");
+  const telegramId = /^\d+$/.test(normalizedUser) ? BigInt(normalizedUser) : null;
+
+  return prisma.telegramUser.findFirst({
+    where: telegramId
+      ? { telegramId }
+      : {
+          username: {
+            equals: normalizedUser,
+            mode: "insensitive",
+          },
+        },
+  });
+}
+
+async function listTelegramPurchases(where: Prisma.TelegramPurchaseWhereInput) {
+  const purchases = await prisma.telegramPurchase.findMany({
+    where,
+    orderBy: {
+      updatedAt: "desc",
+    },
+    select: {
+      id: true,
+      product: true,
+      sourceId: true,
+      status: true,
+      amount: true,
+      paidAt: true,
+      updatedAt: true,
+    },
+  });
+  const sources = purchases.length
+    ? await prisma.source.findMany({
+        where: {
+          id: {
+            in: [...new Set(purchases.map((purchase) => purchase.sourceId))],
+          },
+        },
+        select: {
+          id: true,
+          title: true,
+          username: true,
+        },
+      })
+    : [];
+  const sourceById = new Map(sources.map((source) => [source.id, source]));
+
+  return purchases.map((purchase) => {
+    const source = sourceById.get(purchase.sourceId);
+
+    return {
+      ...purchase,
+      sourceTitle: source?.title ?? "",
+      sourceUsername: source?.username ? `@${source.username}` : "",
+    };
+  });
+}
+
+function printTelegramPurchases(purchases: Awaited<ReturnType<typeof listTelegramPurchases>>) {
+  console.table(purchases.map((purchase) => ({
+    id: purchase.id,
+    product: purchase.product,
+    sourceId: purchase.sourceId,
+    source: purchase.sourceUsername || purchase.sourceTitle,
+    status: purchase.status,
+    amount: purchase.amount,
+    paidAt: purchase.paidAt?.toISOString() ?? "",
+  })));
+}
+
 program
   .name("deeptg")
   .description("Community Intelligence Telegram CLI")
@@ -1535,13 +1606,7 @@ program
     },
   ) => {
     try {
-      const normalizedUser = user.trim().replace(/^@/, "");
-      const telegramId = /^\d+$/.test(normalizedUser) ? BigInt(normalizedUser) : null;
-      const telegramUser = await prisma.telegramUser.findFirst({
-        where: telegramId
-          ? { telegramId }
-          : { username: normalizedUser },
-      });
+      const telegramUser = await findTelegramUserByRef(user);
 
       if (!telegramUser) {
         throw new Error(`Telegram user not found: ${user}`);
@@ -1551,41 +1616,66 @@ program
         throw new Error("--status must be one of: paid, pending, all.");
       }
 
-      const deleteWhere = {
+      const deleteWhere: Prisma.TelegramPurchaseWhereInput = {
         telegramId: telegramUser.telegramId,
         ...(options.product ? { product: options.product } : {}),
         ...(options.source ? { sourceId: options.source } : {}),
         ...(options.status === "all" ? {} : { status: options.status }),
       };
-      const before = await prisma.telegramPurchase.findMany({
-        where: deleteWhere,
-        orderBy: {
-          updatedAt: "desc",
-        },
-        select: {
-          id: true,
-          product: true,
-          sourceId: true,
-          status: true,
-          amount: true,
-          paidAt: true,
-        },
-      });
+      const purchases = await listTelegramPurchases(deleteWhere);
       const deleted = await prisma.telegramPurchase.deleteMany({
         where: deleteWhere,
       });
 
       console.log(`Revoked ${deleted.count} purchase(s) for @${telegramUser.username ?? telegramUser.telegramId.toString()}.`);
 
-      if (before.length) {
-        console.table(before.map((purchase) => ({
-          id: purchase.id,
-          product: purchase.product,
-          sourceId: purchase.sourceId,
-          status: purchase.status,
-          amount: purchase.amount,
-          paidAt: purchase.paidAt?.toISOString() ?? "",
-        })));
+      if (purchases.length) {
+        printTelegramPurchases(purchases);
+      }
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+program
+  .command("payments:reset-user")
+  .description("Delete all Telegram Stars payments and channel access records for a user")
+  .argument("<user>", "Telegram username, @username, or numeric telegram id")
+  .option("--dry-run", "Print matching records without deleting them")
+  .action(async (
+    user: string,
+    options: {
+      dryRun?: boolean;
+    },
+  ) => {
+    try {
+      const telegramUser = await findTelegramUserByRef(user);
+
+      if (!telegramUser) {
+        throw new Error(`Telegram user not found: ${user}`);
+      }
+
+      const resetWhere: Prisma.TelegramPurchaseWhereInput = {
+        OR: [
+          { telegramUserId: telegramUser.id },
+          { telegramId: telegramUser.telegramId },
+        ],
+      };
+      const purchases = await listTelegramPurchases(resetWhere);
+      const displayName = telegramUser.username ? `@${telegramUser.username}` : telegramUser.telegramId.toString();
+
+      if (options.dryRun) {
+        console.log(`Would reset ${purchases.length} payment/access record(s) for ${displayName}.`);
+      } else {
+        const deleted = await prisma.telegramPurchase.deleteMany({
+          where: resetWhere,
+        });
+
+        console.log(`Reset ${deleted.count} payment/access record(s) for ${displayName}.`);
+      }
+
+      if (purchases.length) {
+        printTelegramPurchases(purchases);
       }
     } finally {
       await prisma.$disconnect();
