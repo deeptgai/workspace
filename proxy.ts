@@ -14,6 +14,8 @@ const PUBLIC_PATHS = new Set([
   "/favicon.ico",
   "/robots.txt",
   "/sitemap.xml",
+  "/s",
+  "/auth/telegram",
 ]);
 
 function isPublicPath(pathname: string) {
