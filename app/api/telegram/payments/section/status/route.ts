@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "../../../../../../src/db/prisma";
-import { isPaidSectionId, paidSectionProduct } from "../../../../../../src/telegram/starsPayments";
+import { findPaidSourceAccess } from "../../../../../../src/telegram/sourceAccess";
+import { isPaidSectionId } from "../../../../../../src/telegram/starsPayments";
 import { getTelegramSessionFromCookieHeader } from "../../../../../../src/telegram/webAppSession";
 import { telegramInitDataMaxAgeSeconds, verifyTelegramWebAppInitData } from "../../../../../../src/telegram/webAppAuth";
 
@@ -39,17 +40,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, access: false, mode: user ? "telegram" : "browser" });
   }
 
-  const purchase = await prisma.telegramPurchase.findFirst({
-    where: {
-      telegramId: BigInt(user.id),
-      product: paidSectionProduct(sectionId),
-      sourceId,
-      status: "paid",
-    },
-    select: {
-      id: true,
-      paidAt: true,
-    },
+  const purchase = await findPaidSourceAccess(prisma, {
+    telegramId: BigInt(user.id),
+    sourceId,
   });
 
   return NextResponse.json({ ok: true, access: Boolean(purchase), paidAt: purchase?.paidAt ?? null });

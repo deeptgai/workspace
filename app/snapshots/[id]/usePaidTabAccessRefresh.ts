@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import type { SnapshotSignalKind } from "../../../src/snapshots/sourceSnapshotSchema";
-import type { PaidTab, PaidTabAccess } from "./snapshotTypes";
+import { paidTabs, type PaidTab, type PaidTabAccess } from "./snapshotTypes";
 
 type UsePaidTabAccessRefreshArgs = {
   activeTab: SnapshotSignalKind | "all";
@@ -54,11 +54,16 @@ export function usePaidTabAccessRefresh({
   }, [checkPaidTabAccess, paidTabAccess, sectionCount, setPaidAccess]);
 
   useEffect(() => {
-    if (!isPaidTab(activeTab)) {
+    if (isPaidTab(activeTab)) {
+      refreshPaidTabAccess(activeTab);
       return;
     }
 
-    refreshPaidTabAccess(activeTab);
+    if (activeTab === "all") {
+      for (const paidTab of paidTabs) {
+        refreshPaidTabAccess(paidTab as PaidTab);
+      }
+    }
   }, [activeTab, refreshPaidTabAccess]);
 
   useEffect(() => {

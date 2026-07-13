@@ -3,7 +3,8 @@ import { getSourceSignalMap } from "../../../../../data";
 import { getSnapshotEvidenceMessages } from "../../../../../snapshots/snapshotViewData";
 import { evidenceForSnapshot } from "../../../../../s/publicSnapshot";
 import { prisma } from "../../../../../../src/db/prisma";
-import { isPaidSectionId, paidSectionProduct, type PaidSectionId } from "../../../../../../src/telegram/starsPayments";
+import { findPaidSourceAccess } from "../../../../../../src/telegram/sourceAccess";
+import { isPaidSectionId, type PaidSectionId } from "../../../../../../src/telegram/starsPayments";
 import { getTelegramSessionFromCookieHeader } from "../../../../../../src/telegram/webAppSession";
 import { telegramInitDataMaxAgeSeconds, verifyTelegramWebAppInitData } from "../../../../../../src/telegram/webAppAuth";
 import type { SnapshotSignalKind } from "../../../../../../src/snapshots/sourceSnapshotSchema";
@@ -60,16 +61,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "Source not found" }, { status: 404 });
   }
 
-  const purchase = await prisma.telegramPurchase.findFirst({
-    where: {
-      telegramId: BigInt(user.id),
-      product: paidSectionProduct(sectionId),
-      sourceId: sourceMap.sourceId,
-      status: "paid",
-    },
-    select: {
-      id: true,
-    },
+  const purchase = await findPaidSourceAccess(prisma, {
+    telegramId: BigInt(user.id),
+    sourceId: sourceMap.sourceId,
   });
 
   if (!purchase) {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../../../../../../src/db/prisma";
 import { createPaidSectionInvoiceLink } from "../../../../../../src/telegram/starsInvoices";
+import { findPaidSourceAccess } from "../../../../../../src/telegram/sourceAccess";
 import {
   isPaidSectionId,
   makePaidSectionInvoicePayload,
@@ -88,13 +89,9 @@ export async function POST(request: Request) {
     },
   });
 
-  const paidPurchase = await prisma.telegramPurchase.findFirst({
-    where: {
-      telegramId,
-      product,
-      sourceId,
-      status: "paid",
-    },
+  const paidPurchase = await findPaidSourceAccess(prisma, {
+    telegramId,
+    sourceId,
   });
 
   if (paidPurchase) {
