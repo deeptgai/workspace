@@ -3,6 +3,7 @@
 import "dotenv/config";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { prisma } from "./db/prisma.ts";
+import { grantPaidSourceAccess, upsertTelegramUserWithCustomer } from "./telegram/sourceAccess.ts";
 import { paidSectionTitle, parsePaidSectionInvoicePayload } from "./telegram/starsPayments.ts";
 
 type TelegramResponse<T> = {
@@ -195,25 +196,9 @@ async function handlePreCheckoutQuery(query: NonNullable<TelegramUpdate["pre_che
     return;
   }
 
-  await prisma.telegramUser.upsert({
-    where: {
-      telegramId: BigInt(query.from.id),
-    },
-    update: {
-      username: query.from.username,
-      firstName: query.from.first_name,
-      lastName: query.from.last_name,
-      languageCode: query.from.language_code,
-      rawJson: query.from,
-    },
-    create: {
-      telegramId: BigInt(query.from.id),
-      username: query.from.username,
-      firstName: query.from.first_name,
-      lastName: query.from.last_name,
-      languageCode: query.from.language_code,
-      rawJson: query.from,
-    },
+  await upsertTelegramUserWithCustomer(prisma, {
+    telegramId: BigInt(query.from.id),
+    profile: query.from,
   });
 
   await answerPreCheckoutQuery(query.id, true);
@@ -238,24 +223,47 @@ async function handleSuccessfulPayment(message: TelegramMessage): Promise<void> 
     return;
   }
 
-  const telegramUser = await prisma.telegramUser.upsert({
+  const telegramUser = await upsertTelegramUserWithCustomer(prisma, {
+    telegramId,
+    profile: message.from,
+  });
+  const paidAt = new Date();
+  const paymentRecord = await prisma.payment.upsert({
     where: {
-      telegramId,
+      provider_providerPaymentId: {
+        provider: "telegram_stars",
+        providerPaymentId: payment.telegram_payment_charge_id,
+      },
     },
     update: {
-      username: message.from?.username,
-      firstName: message.from?.first_name,
-      lastName: message.from?.last_name,
-      languageCode: message.from?.language_code,
-      rawJson: message.from,
+      customerId: telegramUser.customerId,
+      providerCustomerId: telegramId.toString(),
+      product: payload.product,
+      sourceId: payload.sourceId,
+      status: "paid",
+      currency: payment.currency,
+      amount: payment.total_amount,
+      paidAt,
+      metadata: {
+        invoicePayload: payment.invoice_payload,
+        providerPaymentChargeId: payment.provider_payment_charge_id,
+      },
     },
     create: {
-      telegramId,
-      username: message.from?.username,
-      firstName: message.from?.first_name,
-      lastName: message.from?.last_name,
-      languageCode: message.from?.language_code,
-      rawJson: message.from,
+      customerId: telegramUser.customerId,
+      provider: "telegram_stars",
+      providerPaymentId: payment.telegram_payment_charge_id,
+      providerCustomerId: telegramId.toString(),
+      product: payload.product,
+      sourceId: payload.sourceId,
+      status: "paid",
+      currency: payment.currency,
+      amount: payment.total_amount,
+      paidAt,
+      metadata: {
+        invoicePayload: payment.invoice_payload,
+        providerPaymentChargeId: payment.provider_payment_charge_id,
+      },
     },
   });
 
@@ -269,11 +277,12 @@ async function handleSuccessfulPayment(message: TelegramMessage): Promise<void> 
   });
   const paidPurchaseData = {
     telegramUserId: telegramUser.id,
+    paymentId: paymentRecord.id,
     status: "paid",
     amount: payment.total_amount,
     telegramPaymentChargeId: payment.telegram_payment_charge_id,
     providerPaymentChargeId: payment.provider_payment_charge_id,
-    paidAt: new Date(),
+    paidAt,
   };
   const paidAccessWhere = {
     telegramId,
@@ -304,6 +313,7 @@ async function handleSuccessfulPayment(message: TelegramMessage): Promise<void> 
     await prisma.telegramPurchase.create({
       data: {
         telegramUserId: telegramUser.id,
+        paymentId: paymentRecord.id,
         telegramId,
         product: payload.product,
         sourceId: payload.sourceId,
@@ -312,7 +322,20 @@ async function handleSuccessfulPayment(message: TelegramMessage): Promise<void> 
         invoicePayload: payment.invoice_payload,
         telegramPaymentChargeId: payment.telegram_payment_charge_id,
         providerPaymentChargeId: payment.provider_payment_charge_id,
-        paidAt: new Date(),
+        paidAt,
+      },
+    });
+  }
+
+  if (telegramUser.customerId) {
+    await grantPaidSourceAccess(prisma, {
+      customerId: telegramUser.customerId,
+      sourceId: payload.sourceId,
+      provider: "telegram_stars",
+      product: payload.product,
+      paymentId: paymentRecord.id,
+      metadata: {
+        telegramPaymentChargeId: payment.telegram_payment_charge_id,
       },
     });
   }

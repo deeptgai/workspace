@@ -136,6 +136,95 @@ async function listTelegramPurchases(where: Prisma.TelegramPurchaseWhereInput) {
   });
 }
 
+async function listPayments(where: Prisma.PaymentWhereInput) {
+  const payments = await prisma.payment.findMany({
+    where,
+    orderBy: {
+      updatedAt: "desc",
+    },
+    select: {
+      id: true,
+      provider: true,
+      providerPaymentId: true,
+      product: true,
+      sourceId: true,
+      status: true,
+      currency: true,
+      amount: true,
+      paidAt: true,
+    },
+  });
+  const sources = payments.length
+    ? await prisma.source.findMany({
+        where: {
+          id: {
+            in: [...new Set(payments.flatMap((payment) => payment.sourceId ? [payment.sourceId] : []))],
+          },
+        },
+        select: {
+          id: true,
+          title: true,
+          username: true,
+        },
+      })
+    : [];
+  const sourceById = new Map(sources.map((source) => [source.id, source]));
+
+  return payments.map((payment) => {
+    const source = payment.sourceId ? sourceById.get(payment.sourceId) : null;
+
+    return {
+      ...payment,
+      sourceTitle: source?.title ?? "",
+      sourceUsername: source?.username ? `@${source.username}` : "",
+    };
+  });
+}
+
+async function listSourceAccessGrants(where: Prisma.SourceAccessGrantWhereInput) {
+  const grants = await prisma.sourceAccessGrant.findMany({
+    where,
+    orderBy: {
+      updatedAt: "desc",
+    },
+    select: {
+      id: true,
+      provider: true,
+      product: true,
+      sourceId: true,
+      scope: true,
+      status: true,
+      grantedAt: true,
+      expiresAt: true,
+    },
+  });
+  const sources = grants.length
+    ? await prisma.source.findMany({
+        where: {
+          id: {
+            in: [...new Set(grants.map((grant) => grant.sourceId))],
+          },
+        },
+        select: {
+          id: true,
+          title: true,
+          username: true,
+        },
+      })
+    : [];
+  const sourceById = new Map(sources.map((source) => [source.id, source]));
+
+  return grants.map((grant) => {
+    const source = sourceById.get(grant.sourceId);
+
+    return {
+      ...grant,
+      sourceTitle: source?.title ?? "",
+      sourceUsername: source?.username ? `@${source.username}` : "",
+    };
+  });
+}
+
 function printTelegramPurchases(purchases: Awaited<ReturnType<typeof listTelegramPurchases>>) {
   console.table(purchases.map((purchase) => ({
     id: purchase.id,
@@ -145,6 +234,33 @@ function printTelegramPurchases(purchases: Awaited<ReturnType<typeof listTelegra
     status: purchase.status,
     amount: purchase.amount,
     paidAt: purchase.paidAt?.toISOString() ?? "",
+  })));
+}
+
+function printPayments(payments: Awaited<ReturnType<typeof listPayments>>) {
+  console.table(payments.map((payment) => ({
+    id: payment.id,
+    provider: payment.provider,
+    providerPaymentId: payment.providerPaymentId ?? "",
+    product: payment.product,
+    source: payment.sourceUsername || payment.sourceTitle,
+    status: payment.status,
+    amount: `${payment.amount} ${payment.currency}`,
+    paidAt: payment.paidAt?.toISOString() ?? "",
+  })));
+}
+
+function printSourceAccessGrants(grants: Awaited<ReturnType<typeof listSourceAccessGrants>>) {
+  console.table(grants.map((grant) => ({
+    id: grant.id,
+    provider: grant.provider ?? "",
+    product: grant.product ?? "",
+    sourceId: grant.sourceId,
+    source: grant.sourceUsername || grant.sourceTitle,
+    scope: grant.scope,
+    status: grant.status,
+    grantedAt: grant.grantedAt.toISOString(),
+    expiresAt: grant.expiresAt?.toISOString() ?? "",
   })));
 }
 
@@ -1626,8 +1742,36 @@ program
       const deleted = await prisma.telegramPurchase.deleteMany({
         where: deleteWhere,
       });
+      let revokedGrants = 0;
 
-      console.log(`Revoked ${deleted.count} purchase(s) for @${telegramUser.username ?? telegramUser.telegramId.toString()}.`);
+      if (telegramUser.customerId && options.status !== "pending") {
+        const affectedSourceIds = [...new Set(purchases.map((purchase) => purchase.sourceId))];
+
+        for (const sourceId of affectedSourceIds) {
+          const remainingPaidPurchase = await prisma.telegramPurchase.findFirst({
+            where: {
+              telegramId: telegramUser.telegramId,
+              sourceId,
+              status: "paid",
+            },
+          });
+
+          if (!remainingPaidPurchase) {
+            const deletedGrants = await prisma.sourceAccessGrant.deleteMany({
+              where: {
+                customerId: telegramUser.customerId,
+                sourceId,
+                provider: "telegram_stars",
+              },
+            });
+            revokedGrants += deletedGrants.count;
+          }
+        }
+      }
+
+      console.log(
+        `Revoked ${deleted.count} Telegram receipt(s) and ${revokedGrants} access grant(s) for @${telegramUser.username ?? telegramUser.telegramId.toString()}.`,
+      );
 
       if (purchases.length) {
         printTelegramPurchases(purchases);
@@ -1639,7 +1783,7 @@ program
 
 program
   .command("payments:reset-user")
-  .description("Delete all Telegram Stars payments and channel access records for a user")
+  .description("Delete all payment records and channel access grants for a user")
   .argument("<user>", "Telegram username, @username, or numeric telegram id")
   .option("--dry-run", "Print matching records without deleting them")
   .action(async (
@@ -1661,22 +1805,148 @@ program
           { telegramId: telegramUser.telegramId },
         ],
       };
+      const paymentWhere: Prisma.PaymentWhereInput = telegramUser.customerId
+        ? { customerId: telegramUser.customerId }
+        : { provider: "telegram_stars", providerCustomerId: telegramUser.telegramId.toString() };
+      const grantWhere: Prisma.SourceAccessGrantWhereInput = telegramUser.customerId
+        ? { customerId: telegramUser.customerId }
+        : { id: "__missing_customer__" };
       const purchases = await listTelegramPurchases(resetWhere);
+      const payments = await listPayments(paymentWhere);
+      const grants = await listSourceAccessGrants(grantWhere);
       const displayName = telegramUser.username ? `@${telegramUser.username}` : telegramUser.telegramId.toString();
 
       if (options.dryRun) {
-        console.log(`Would reset ${purchases.length} payment/access record(s) for ${displayName}.`);
+        console.log(
+          `Would reset ${purchases.length} Telegram receipt(s), ${payments.length} payment record(s), and ${grants.length} access grant(s) for ${displayName}.`,
+        );
       } else {
-        const deleted = await prisma.telegramPurchase.deleteMany({
-          where: resetWhere,
-        });
+        const [deletedGrants, deletedPurchases, deletedPayments] = await prisma.$transaction([
+          prisma.sourceAccessGrant.deleteMany({
+            where: grantWhere,
+          }),
+          prisma.telegramPurchase.deleteMany({
+            where: resetWhere,
+          }),
+          prisma.payment.deleteMany({
+            where: paymentWhere,
+          }),
+        ]);
 
-        console.log(`Reset ${deleted.count} payment/access record(s) for ${displayName}.`);
+        console.log(
+          `Reset ${deletedPurchases.count} Telegram receipt(s), ${deletedPayments.count} payment record(s), and ${deletedGrants.count} access grant(s) for ${displayName}.`,
+        );
+      }
+
+      if (grants.length) {
+        console.log("Access grants:");
+        printSourceAccessGrants(grants);
+      }
+
+      if (payments.length) {
+        console.log("Payments:");
+        printPayments(payments);
       }
 
       if (purchases.length) {
+        console.log("Telegram receipts:");
         printTelegramPurchases(purchases);
       }
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+program
+  .command("access:backfill")
+  .description("Create source access grants from historical paid Telegram Stars receipts")
+  .option("--dry-run", "Print grants that would be created without writing them")
+  .action(async (options: { dryRun?: boolean }) => {
+    try {
+      const paidPurchases = await prisma.telegramPurchase.findMany({
+        where: {
+          status: "paid",
+        },
+        include: {
+          telegramUser: true,
+          payment: true,
+        },
+        orderBy: {
+          paidAt: "desc",
+        },
+      });
+      let created = 0;
+
+      for (const purchase of paidPurchases) {
+        if (options.dryRun && !purchase.telegramUser.customerId) {
+          created += 1;
+          continue;
+        }
+
+        const customerId = purchase.telegramUser.customerId ?? (await prisma.customer.create({ data: {} })).id;
+
+        if (!purchase.telegramUser.customerId) {
+          await prisma.telegramUser.update({
+            where: {
+              id: purchase.telegramUser.id,
+            },
+            data: {
+              customerId,
+            },
+          });
+        }
+
+        if (options.dryRun) {
+          const existing = await prisma.sourceAccessGrant.findFirst({
+            where: {
+              customerId,
+              sourceId: purchase.sourceId,
+              scope: "source",
+              status: "active",
+            },
+          });
+
+          if (!existing) {
+            created += 1;
+          }
+          continue;
+        }
+
+        await prisma.sourceAccessGrant.upsert({
+          where: {
+            customerId_sourceId_scope_status: {
+              customerId,
+              sourceId: purchase.sourceId,
+              scope: "source",
+              status: "active",
+            },
+          },
+          update: {
+            provider: "telegram_stars",
+            product: purchase.product,
+            paymentId: purchase.paymentId,
+            reason: "purchase",
+            grantedAt: purchase.paidAt ?? purchase.updatedAt,
+            revokedAt: null,
+            expiresAt: null,
+          },
+          create: {
+            customerId,
+            sourceId: purchase.sourceId,
+            scope: "source",
+            status: "active",
+            provider: "telegram_stars",
+            product: purchase.product,
+            paymentId: purchase.paymentId,
+            reason: "purchase",
+            grantedAt: purchase.paidAt ?? purchase.updatedAt,
+          },
+        });
+
+        created += 1;
+      }
+
+      console.log(`${options.dryRun ? "Would backfill" : "Backfilled"} ${created} source access grant(s).`);
     } finally {
       await prisma.$disconnect();
     }

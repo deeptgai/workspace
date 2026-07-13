@@ -26,6 +26,8 @@ model Source {
   snapshots    SourceSnapshot[]
   signals      SourceSignal[]
   importStates SourceImportState[]
+  payments     Payment[]
+  accessGrants SourceAccessGrant[]
 
   @@unique([provider, externalId])
   @@index([provider])
@@ -77,6 +79,7 @@ model Actor {
 
 model TelegramUser {
   id           String   @id @default(cuid())
+  customerId   String?
   telegramId   BigInt   @unique
   username     String?
   firstName    String?
@@ -86,14 +89,84 @@ model TelegramUser {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  customer  Customer?          @relation(fields: [customerId], references: [id], onDelete: SetNull)
   purchases TelegramPurchase[]
 
+  @@index([customerId])
   @@index([username])
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  telegramUsers TelegramUser[]
+  payments      Payment[]
+  accessGrants  SourceAccessGrant[]
+}
+
+model Payment {
+  id                 String    @id @default(cuid())
+  customerId         String?
+  provider           String
+  providerPaymentId  String?
+  providerCustomerId String?
+  product            String
+  sourceId           String?
+  status             String    @default("pending")
+  currency           String
+  amount             Int
+  paidAt             DateTime?
+  metadata           Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  customer          Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  source            Source?             @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  telegramPurchases TelegramPurchase[]
+  accessGrants      SourceAccessGrant[]
+
+  @@unique([provider, providerPaymentId])
+  @@index([customerId])
+  @@index([provider])
+  @@index([sourceId])
+  @@index([status])
+}
+
+model SourceAccessGrant {
+  id         String    @id @default(cuid())
+  customerId String
+  sourceId   String
+  scope      String    @default("source")
+  status     String    @default("active")
+  provider   String?
+  product    String?
+  paymentId  String?
+  reason     String    @default("purchase")
+  grantedAt  DateTime  @default(now())
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  source   Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  payment  Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@unique([customerId, sourceId, scope, status])
+  @@index([customerId])
+  @@index([sourceId])
+  @@index([status])
+  @@index([provider])
+  @@index([paymentId])
 }
 
 model TelegramPurchase {
   id                      String    @id @default(cuid())
   telegramUserId          String
+  paymentId               String?
   telegramId              BigInt
   product                 String
   sourceId                String
@@ -108,9 +181,11 @@ model TelegramPurchase {
   updatedAt               DateTime  @updatedAt
 
   telegramUser TelegramUser @relation(fields: [telegramUserId], references: [id], onDelete: Cascade)
+  payment      Payment?     @relation(fields: [paymentId], references: [id], onDelete: SetNull)
 
   @@unique([telegramId, product, sourceId, status])
   @@index([telegramUserId])
+  @@index([paymentId])
   @@index([telegramId])
   @@index([sourceId])
   @@index([status])

@@ -4,7 +4,7 @@ import { prisma } from "../../../../../../src/db/prisma";
 import { signalKindForSectionId } from "../../../../../../src/snapshots/signalSections";
 import { isSourceSignalKindPaid } from "../../../../../../src/sources/paidSignalKinds";
 import { createPaidSectionInvoiceLink } from "../../../../../../src/telegram/starsInvoices";
-import { findPaidSourceAccess } from "../../../../../../src/telegram/sourceAccess";
+import { findPaidSourceAccess, upsertTelegramUserWithCustomer } from "../../../../../../src/telegram/sourceAccess";
 import {
   isPaidSectionId,
   makePaidSectionInvoicePayload,
@@ -88,25 +88,9 @@ export async function POST(request: Request) {
   const telegramId = BigInt(user.id);
   const product = paidSectionProduct(sectionId);
 
-  const telegramUser = await prisma.telegramUser.upsert({
-    where: {
-      telegramId,
-    },
-    update: {
-      username: user.username,
-      firstName: user.first_name,
-      lastName: user.last_name,
-      languageCode: user.language_code,
-      rawJson: user,
-    },
-    create: {
-      telegramId,
-      username: user.username,
-      firstName: user.first_name,
-      lastName: user.last_name,
-      languageCode: user.language_code,
-      rawJson: user,
-    },
+  const telegramUser = await upsertTelegramUserWithCustomer(prisma, {
+    telegramId,
+    profile: user,
   });
 
   const paidPurchase = await findPaidSourceAccess(prisma, {
