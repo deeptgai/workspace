@@ -25,13 +25,13 @@ const requestBody = buildPaidSectionInvoiceRequest({
   invoicePayload,
 });
 
-if ("provider_token" in requestBody || "providerToken" in requestBody) {
-  throw new Error("Stars invoice request must not include provider_token/providerToken.");
+if (requestBody.provider_token !== "") {
+  throw new Error("Stars invoice request must include an empty provider_token for Telegram Stars.");
 }
 
 console.log("Stars invoice request body:");
 console.log(JSON.stringify(requestBody, null, 2));
-console.log("\nOK: provider_token is omitted, currency is XTR.");
+console.log("\nOK: provider_token is empty, currency is XTR.");
 
 if (process.env.LIVE === "1") {
   const invoice = await createPaidSectionInvoiceLink({

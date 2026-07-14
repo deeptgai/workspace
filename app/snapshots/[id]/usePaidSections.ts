@@ -167,7 +167,7 @@ export function usePaidSections({
         return;
       }
 
-      webApp.openInvoice(payload.invoiceLink, async (status) => {
+      webApp.openInvoice(payload.webAppInvoiceLink || payload.invoiceLink, async (status) => {
         if (status !== "paid") {
           setPaidAccess(tab, "locked");
           setPaymentMessage("Оплата не завершена.");
