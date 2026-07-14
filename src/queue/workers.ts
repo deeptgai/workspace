@@ -620,21 +620,40 @@ export function startWorkers() {
     async (job) => {
       console.log(`[${SNAPSHOT_COVER_IMAGE_QUEUE}] job ${job.id} started`, job.data);
 
-      const result = await generateAndStoreSnapshotCoverImage(prisma, job.data.snapshotId);
-      await patchSnapshotPipeline(prisma, job.data.snapshotId, {
-        images: {
-          coverStatus: result.status === "generated" ? "completed" : result.status,
-          coverCompletedAt: new Date().toISOString(),
-          coverReason: result.status === "skipped" ? result.reason : undefined,
-        },
-      });
+      try {
+        const result = await generateAndStoreSnapshotCoverImage(prisma, job.data.snapshotId);
+        await patchSnapshotPipeline(prisma, job.data.snapshotId, {
+          images: {
+            coverStatus: result.status === "generated" ? "completed" : result.status,
+            coverCompletedAt: new Date().toISOString(),
+            coverReason: result.status === "skipped" ? result.reason : undefined,
+            coverError: null,
+          },
+        });
 
-      console.log(`[${SNAPSHOT_COVER_IMAGE_QUEUE}] job ${job.id} complete`, {
-        snapshotId: job.data.snapshotId,
-        status: result.status,
-        reason: result.status === "skipped" ? result.reason : undefined,
-      });
-      return result;
+        console.log(`[${SNAPSHOT_COVER_IMAGE_QUEUE}] job ${job.id} complete`, {
+          snapshotId: job.data.snapshotId,
+          status: result.status,
+          reason: result.status === "skipped" ? result.reason : undefined,
+        });
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await patchSnapshotPipeline(prisma, job.data.snapshotId, {
+          images: {
+            status: "failed",
+            coverStatus: "failed",
+            coverError: message,
+            coverCompletedAt: new Date().toISOString(),
+          },
+          errors: [{
+            stage: "cover-image",
+            message,
+            at: new Date().toISOString(),
+          }],
+        });
+        throw error;
+      }
     },
     {
       connection: snapshotCoverImageConnection,
@@ -647,31 +666,52 @@ export function startWorkers() {
     async (job) => {
       console.log(`[${SIGNAL_PREVIEW_IMAGE_QUEUE}] job ${job.id} started`, job.data);
 
-      const result = await generateAndStoreSignalPreviewImage(prisma, job.data.snapshotId, job.data.signalId);
-      const previewsCompleted = await prisma.snapshotSignal.count({
-        where: {
-          snapshotId: job.data.snapshotId,
-          previewImage: {
-            not: Prisma.JsonNull,
+      try {
+        const result = await generateAndStoreSignalPreviewImage(prisma, job.data.snapshotId, job.data.signalId);
+        const previewsCompleted = await prisma.snapshotSignal.count({
+          where: {
+            snapshotId: job.data.snapshotId,
+            previewImage: {
+              not: Prisma.JsonNull,
+            },
           },
-        },
-      });
-      await patchSnapshotPipeline(prisma, job.data.snapshotId, {
-        images: {
-          previewsCompleted,
-          lastPreviewSignalId: job.data.signalId,
-          lastPreviewStatus: result.status,
-          lastPreviewCompletedAt: new Date().toISOString(),
-        },
-      });
+        });
+        await patchSnapshotPipeline(prisma, job.data.snapshotId, {
+          images: {
+            previewsCompleted,
+            lastPreviewSignalId: job.data.signalId,
+            lastPreviewStatus: result.status,
+            lastPreviewCompletedAt: new Date().toISOString(),
+            lastPreviewError: null,
+          },
+        });
 
-      console.log(`[${SIGNAL_PREVIEW_IMAGE_QUEUE}] job ${job.id} complete`, {
-        snapshotId: job.data.snapshotId,
-        signalId: job.data.signalId,
-        status: result.status,
-        reason: result.status === "skipped" ? result.reason : undefined,
-      });
-      return result;
+        console.log(`[${SIGNAL_PREVIEW_IMAGE_QUEUE}] job ${job.id} complete`, {
+          snapshotId: job.data.snapshotId,
+          signalId: job.data.signalId,
+          status: result.status,
+          reason: result.status === "skipped" ? result.reason : undefined,
+        });
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await patchSnapshotPipeline(prisma, job.data.snapshotId, {
+          images: {
+            status: "failed",
+            lastPreviewSignalId: job.data.signalId,
+            lastPreviewStatus: "failed",
+            lastPreviewError: message,
+            lastPreviewCompletedAt: new Date().toISOString(),
+          },
+          errors: [{
+            stage: "signal-preview-image",
+            signalId: job.data.signalId,
+            message,
+            at: new Date().toISOString(),
+          }],
+        });
+        throw error;
+      }
     },
     {
       connection: signalPreviewImageConnection,
