@@ -66,7 +66,7 @@ export function SnapshotSignalCard({
 
   return (
     <article
-      className={`group relative flex min-h-[190px] flex-col justify-between overflow-hidden rounded-lg border bg-cover bg-center p-3 shadow-sm transition duration-200 ${
+      className={`group relative flex min-h-[190px] flex-col justify-between overflow-hidden rounded-lg border p-3 shadow-sm transition duration-200 ${
         locked ? "" : "cursor-pointer hover:-translate-y-1 hover:border-emerald-200 hover:shadow-lg"
       } ${
         animateIntro ? "motion-safe:animate-[snapshotFadeIn_320ms_ease-out]" : ""
@@ -74,13 +74,16 @@ export function SnapshotSignalCard({
         hasPreviewBackground ? "border-slate-800 bg-slate-950" : "border-slate-200 bg-white"
       }`}
       {...interactiveProps}
-      style={{
-        ...(animateIntro ? { animationDelay: `${Math.min(index * 28, 240)}ms` } : {}),
-        ...(hasPreviewBackground ? { backgroundImage: `url("${signal.previewImage?.url}")` } : {}),
-      }}
+      style={animateIntro ? { animationDelay: `${Math.min(index * 28, 240)}ms` } : undefined}
     >
       {hasPreviewBackground ? (
-        <div className="absolute inset-0 bg-slate-900/64 transition duration-200 group-hover:bg-slate-900/56" />
+        <div
+          className="absolute inset-0 scale-110 bg-cover bg-center blur-[5px]"
+          style={{ backgroundImage: `url("${signal.previewImage?.url}")` }}
+        />
+      ) : null}
+      {hasPreviewBackground ? (
+        <div className="absolute inset-0 bg-slate-950/72 transition duration-200 group-hover:bg-slate-950/66" />
       ) : null}
       {!locked ? (
         <a className="sr-only" href={href}>
@@ -159,7 +162,7 @@ export function SnapshotSignalCard({
           ))}
         </div>
         <div className={`pointer-events-none absolute inset-y-0 right-0 w-10 ${
-          hasPreviewBackground ? "bg-gradient-to-l from-slate-900/80 to-transparent" : "bg-gradient-to-l from-white to-transparent"
+          hasPreviewBackground ? "bg-gradient-to-l from-slate-950/90 to-transparent" : "bg-gradient-to-l from-white to-transparent"
         }`} />
       </div>
       {locked ? (

@@ -26,6 +26,15 @@ type ChatCompletionOptions = {
   allowJsonFallback?: boolean;
 };
 
+class ChatCompletionHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timeout: NodeJS.Timeout | undefined;
 
@@ -66,6 +75,31 @@ function isRetryableError(error: unknown) {
     message.includes("http 504");
 }
 
+function shouldFallbackFromSchemaError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  if (error instanceof ChatCompletionHttpError && (error.status === 401 || error.status === 403)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+
+  if (message.includes("invalid schema")) {
+    return false;
+  }
+
+  return message.includes("provider returned error") ||
+    message.includes("response_format") ||
+    message.includes("json_schema") ||
+    message.includes("structured output") ||
+    message.includes("structured outputs") ||
+    message.includes("require_parameters") ||
+    message.includes("unsupported parameter") ||
+    message.includes("does not support");
+}
+
 export async function createChatCompletion(
   config: AiConfig,
   messages: ChatMessage[],
@@ -79,7 +113,7 @@ export async function createChatCompletion(
     : [options];
   let lastError: unknown;
 
-  for (const requestOptions of requestVariants) {
+  for (const [variantIndex, requestOptions] of requestVariants.entries()) {
     lastError = undefined;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -148,7 +182,10 @@ export async function createChatCompletion(
         );
 
         if (!response.ok) {
-          throw new Error(json.error?.message || `Source completion failed with HTTP ${response.status}`);
+          throw new ChatCompletionHttpError(
+            json.error?.message || `Source completion failed with HTTP ${response.status}`,
+            response.status,
+          );
         }
 
         const content = json.choices?.[0]?.message?.content?.trim();
@@ -167,6 +204,12 @@ export async function createChatCompletion(
 
         await sleep(2000 * attempt);
       }
+    }
+
+    const hasFallbackVariant = variantIndex < requestVariants.length - 1;
+
+    if (!hasFallbackVariant || !shouldFallbackFromSchemaError(lastError)) {
+      break;
     }
   }
 
