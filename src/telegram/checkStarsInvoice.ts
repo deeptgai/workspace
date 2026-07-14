@@ -12,6 +12,7 @@ const sectionArg = process.argv[2] || "tools";
 const sectionId = isPaidSectionId(sectionArg) ? sectionArg : "tools";
 const sourceId = process.env.STARS_TEST_SOURCE_ID || "debug-source";
 const sourceTitle = process.env.STARS_TEST_SOURCE_TITLE || "DeepTG test";
+const sourceAccessPriceUsdCents = Number(process.env.STARS_TEST_PRICE_USD_CENTS || 1000);
 const invoicePayload = makePaidSectionInvoicePayload({
   sectionId,
   sourceId,
@@ -20,6 +21,7 @@ const invoicePayload = makePaidSectionInvoicePayload({
 const requestBody = buildPaidSectionInvoiceRequest({
   sectionId,
   sourceTitle,
+  sourceAccessPriceUsdCents,
   invoicePayload,
 });
 
@@ -35,6 +37,7 @@ if (process.env.LIVE === "1") {
   const invoice = await createPaidSectionInvoiceLink({
     sectionId,
     sourceTitle,
+    sourceAccessPriceUsdCents,
     invoicePayload,
   });
 

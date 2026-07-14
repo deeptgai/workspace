@@ -7,6 +7,7 @@ import { prisma } from "../src/db/prisma";
 import { enqueueSourceSnapshotJob } from "../src/queue/snapshotQueue";
 import { normalizePaidSignalKinds } from "../src/sources/paidSignalKinds";
 import { initialSnapshotPipeline } from "../src/snapshots/pipeline";
+import { normalizeSourceAccessPriceUsdCents } from "../src/telegram/starsPayments";
 
 type TelegramImportJobData = {
   chat: string;
@@ -381,6 +382,7 @@ export async function updateSourcePaidSectionsAction(formData: FormData) {
   }
 
   const paidSignalKinds = normalizePaidSignalKinds(formData.getAll("paidSignalKind"));
+  const accessPriceUsdCents = normalizeSourceAccessPriceUsdCents(formData.get("accessPriceUsd"));
 
   await prisma.source.update({
     where: {
@@ -388,6 +390,7 @@ export async function updateSourcePaidSectionsAction(formData: FormData) {
     },
     data: {
       paidSignalKinds,
+      accessPriceUsdCents,
     },
   });
 

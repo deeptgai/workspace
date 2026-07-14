@@ -18,6 +18,7 @@ model Source {
   audienceCount   Int?
   metadata        Json?
   paidSignalKinds String[]  @default([])
+  accessPriceUsdCents Int   @default(1000)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   lastImportAt    DateTime?

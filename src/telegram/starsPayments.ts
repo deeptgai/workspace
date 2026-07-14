@@ -2,6 +2,8 @@ import type { ChannelSnapshotSectionId } from "../snapshots/sourceSnapshotSchema
 import { isSignalSectionId, signalSectionForSectionId, signalSectionIds } from "../snapshots/signalSections.ts";
 
 export const PAID_SECTION_IDS = signalSectionIds;
+export const DEFAULT_SOURCE_ACCESS_PRICE_USD_CENTS = 1000;
+export const DEFAULT_TELEGRAM_STARS_PER_USD = 100;
 
 export type PaidSectionId = ChannelSnapshotSectionId;
 
@@ -25,12 +27,34 @@ export function paidSectionTitle(sectionId: PaidSectionId) {
   return signalSectionForSectionId(sectionId)?.title ?? "Раздел";
 }
 
-export function paidSectionPriceStars(sectionId: PaidSectionId) {
-  const envName = `TELEGRAM_${sectionId.toUpperCase()}_SECTION_PRICE_STARS`;
-  const defaultPrice = 1;
-  const value = Number(process.env[envName] || defaultPrice);
+export function normalizeSourceAccessPriceUsdCents(value: unknown) {
+  const parsed = typeof value === "number"
+    ? value
+    : Number(String(value ?? "").trim().replace(",", "."));
 
-  return Number.isFinite(value) && value > 0 ? value : defaultPrice;
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_SOURCE_ACCESS_PRICE_USD_CENTS;
+  }
+
+  return Math.round(parsed * 100);
+}
+
+export function sourceAccessPriceUsd(sourceAccessPriceUsdCents: number | null | undefined) {
+  const cents = sourceAccessPriceUsdCents ?? DEFAULT_SOURCE_ACCESS_PRICE_USD_CENTS;
+
+  return (cents / 100).toFixed(2);
+}
+
+export function telegramStarsPerUsd() {
+  const value = Number(process.env.TELEGRAM_STARS_PER_USD || DEFAULT_TELEGRAM_STARS_PER_USD);
+
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_TELEGRAM_STARS_PER_USD;
+}
+
+export function sourceAccessPriceStars(sourceAccessPriceUsdCents: number | null | undefined) {
+  const cents = sourceAccessPriceUsdCents ?? DEFAULT_SOURCE_ACCESS_PRICE_USD_CENTS;
+
+  return Math.max(1, Math.ceil(cents * telegramStarsPerUsd() / 100));
 }
 
 export function makePaidSectionInvoicePayload(input: {

@@ -1,4 +1,4 @@
-import { paidSectionPriceStars, paidSectionTitle, type PaidSectionId } from "./starsPayments.ts";
+import { sourceAccessPriceStars, paidSectionTitle, type PaidSectionId } from "./starsPayments.ts";
 
 type TelegramResponse<T> = {
   ok: boolean;
@@ -15,12 +15,13 @@ export type PaidSectionInvoice = {
 export type CreatePaidSectionInvoiceInput = {
   sectionId: PaidSectionId;
   sourceTitle: string;
+  sourceAccessPriceUsdCents: number;
   invoicePayload: string;
 };
 
 export function buildPaidSectionInvoiceRequest(input: CreatePaidSectionInvoiceInput) {
   const title = paidSectionTitle(input.sectionId);
-  const amount = paidSectionPriceStars(input.sectionId);
+  const amount = sourceAccessPriceStars(input.sourceAccessPriceUsdCents);
 
   return {
     title,

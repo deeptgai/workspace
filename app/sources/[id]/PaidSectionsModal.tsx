@@ -4,16 +4,19 @@ import { LockKeyhole, Save, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { SnapshotSignalKind } from "../../../src/snapshots/sourceSnapshotSchema";
 import { signalSectionDefinitions } from "../../../src/snapshots/signalSections";
+import { sourceAccessPriceUsd } from "../../../src/telegram/starsPayments";
 import { updateSourcePaidSectionsAction } from "../../actions";
 
 type PaidSectionsModalProps = {
   sourceId: string;
   paidSignalKinds: SnapshotSignalKind[];
+  accessPriceUsdCents: number;
 };
 
-export function PaidSectionsModal({ sourceId, paidSignalKinds }: PaidSectionsModalProps) {
+export function PaidSectionsModal({ sourceId, paidSignalKinds, accessPriceUsdCents }: PaidSectionsModalProps) {
   const [open, setOpen] = useState(false);
   const [selectedKinds, setSelectedKinds] = useState(() => new Set<SnapshotSignalKind>(paidSignalKinds));
+  const [priceUsd, setPriceUsd] = useState(() => sourceAccessPriceUsd(accessPriceUsdCents));
   const selectedCount = selectedKinds.size;
   const selectedSummary = useMemo(() => {
     if (selectedCount === 0) {
@@ -54,6 +57,7 @@ export function PaidSectionsModal({ sourceId, paidSignalKinds }: PaidSectionsMod
   };
   const openModal = () => {
     setSelectedKinds(new Set(paidSignalKinds));
+    setPriceUsd(sourceAccessPriceUsd(accessPriceUsdCents));
     setOpen(true);
   };
 
@@ -89,6 +93,20 @@ export function PaidSectionsModal({ sourceId, paidSignalKinds }: PaidSectionsMod
               <div className="paid-sections-summary">
                 <span>{selectedSummary}</span>
               </div>
+
+              <label className="paid-price-field">
+                <span>Цена доступа, $</span>
+                <input
+                  className="input"
+                  inputMode="decimal"
+                  min="0.01"
+                  name="accessPriceUsd"
+                  step="0.01"
+                  type="number"
+                  value={priceUsd}
+                  onChange={(event) => setPriceUsd(event.target.value)}
+                />
+              </label>
 
               <div className="paid-sections-grid">
                 {signalSectionDefinitions.map((section) => {

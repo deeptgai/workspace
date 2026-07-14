@@ -482,6 +482,21 @@ select {
   font-weight: 800;
 }
 
+.paid-price-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.paid-price-field .input {
+  width: min(220px, 100%);
+  min-width: 0;
+  color: var(--text);
+}
+
 .paid-section-option {
   min-height: 54px;
   display: flex;

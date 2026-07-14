@@ -56,6 +56,7 @@ export async function POST(request: Request) {
     },
     select: {
       paidSignalKinds: true,
+      accessPriceUsdCents: true,
     },
   });
   const signalKind = signalKindForSectionId(sectionId);
@@ -79,6 +80,7 @@ export async function POST(request: Request) {
     const invoice = await createPaidSectionInvoiceLink({
       sectionId,
       sourceTitle,
+      sourceAccessPriceUsdCents: source.accessPriceUsdCents,
       invoicePayload,
     });
 
@@ -106,6 +108,7 @@ export async function POST(request: Request) {
   const invoice = await createPaidSectionInvoiceLink({
     sectionId,
     sourceTitle,
+    sourceAccessPriceUsdCents: source.accessPriceUsdCents,
     invoicePayload,
   });
   const pendingPurchase = await prisma.telegramPurchase.findFirst({

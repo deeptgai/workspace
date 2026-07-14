@@ -63,7 +63,11 @@ export default async function SourcePage({
           <TypeBadge type={chat.type} />
           <ItemsBadge count={chat._count.items} />
           <SnapshotsBadge count={chat._count.snapshots} />
-          <PaidSectionsModal sourceId={chat.id} paidSignalKinds={paidSignalKinds} />
+          <PaidSectionsModal
+            sourceId={chat.id}
+            paidSignalKinds={paidSignalKinds}
+            accessPriceUsdCents={chat.accessPriceUsdCents}
+          />
           <a className="button" href={`/sources/${chat.id}/export`}>
             <FileDown size={15} />
             Export MD

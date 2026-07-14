@@ -82,8 +82,7 @@ Use these values for the local named tunnel:
 ```text
 TELEGRAM_WEBHOOK_URL=https://bot-local.tgdeep.xyz
 TELEGRAM_MINI_APP_URL=https://local.tgdeep.xyz/s
-TELEGRAM_PEOPLE_SECTION_PRICE_STARS=1
-TELEGRAM_TOOLS_SECTION_PRICE_STARS=1
+TELEGRAM_STARS_PER_USD=100
 ```
 
 Use this URL as the Mini App URL in BotFather:
