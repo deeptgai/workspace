@@ -22,10 +22,19 @@ function asRecord(value: unknown): JsonRecord {
 }
 
 function mergeRecord(current: unknown, patch: unknown): JsonRecord {
-  return {
+  const next = {
     ...asRecord(current),
-    ...asRecord(patch),
   };
+
+  for (const [key, value] of Object.entries(asRecord(patch))) {
+    if (value === null) {
+      delete next[key];
+    } else {
+      next[key] = value;
+    }
+  }
+
+  return next;
 }
 
 export async function patchSnapshotPipeline(

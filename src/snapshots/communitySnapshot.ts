@@ -2161,6 +2161,8 @@ export async function generateCommunitySnapshotSection(
         running,
         pending,
         lastCompletedSectionId: definition.id,
+        error: null,
+        failedSectionId: null,
       },
     });
 
@@ -2380,6 +2382,10 @@ async function completeSnapshotIfReady(
       total: sections.length,
       completed: sections.length,
       failed: 0,
+      pending: 0,
+      running: 0,
+      error: null,
+      failedSectionId: null,
     },
     curation: {
       status: "pending",
