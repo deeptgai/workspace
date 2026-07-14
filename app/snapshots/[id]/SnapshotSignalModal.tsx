@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useId, useRef, type KeyboardEvent } from "react";
-import { ExternalLink, Eye, Gauge, Heart, X } from "lucide-react";
+import { BookOpen, ExternalLink, Eye, Gauge, Heart, X } from "lucide-react";
 import type { SnapshotEvidenceRef, SnapshotSignal } from "../../../src/snapshots/sourceSnapshotSchema";
 import {
   cleanSnapshotText,
@@ -138,6 +138,53 @@ function FormattedText({ text }: { text: string }) {
         );
       })}
     </div>
+  );
+}
+
+function ExternalContextBlock({ signal }: { signal: SnapshotSignal }) {
+  const context = signal.externalContext;
+
+  if (!context || (!context.summary && !context.facts.length)) {
+    return null;
+  }
+
+  return (
+    <section className="mt-4 rounded-lg border border-sky-100 bg-sky-50/70 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-[0.12em] text-sky-700">
+            <BookOpen className="h-4 w-4" strokeWidth={2.4} />
+            Внешний контекст
+          </div>
+          <h3 className="m-0 mt-1 text-base font-black leading-snug text-slate-950">{cleanSnapshotText(context.entityName)}</h3>
+        </div>
+        {context.canonicalUrl ? (
+          <a
+            className="inline-flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-sky-200 bg-white text-sky-700 transition hover:border-sky-300 hover:bg-sky-100 hover:text-sky-900"
+            href={context.canonicalUrl}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Открыть источник"
+          >
+            <ExternalLink size={16} />
+          </a>
+        ) : null}
+      </div>
+
+      {context.summary ? (
+        <p className="m-0 mt-3 text-sm leading-6 text-slate-700">{cleanSnapshotText(context.summary)}</p>
+      ) : null}
+
+      {context.facts.length ? (
+        <ul className="m-0 mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-700 marker:text-sky-700">
+          {context.facts.map((fact) => (
+            <li key={`${fact.sourceUrl}-${fact.claim}`}>
+              {cleanSnapshotText(fact.claim)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
   );
 }
 
@@ -344,6 +391,7 @@ export function SnapshotSignalModal({
                     </a>
                   </div>
                 ) : null}
+                <ExternalContextBlock signal={signal} />
               </div>
             ) : (
               <>

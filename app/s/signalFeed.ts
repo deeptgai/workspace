@@ -144,6 +144,7 @@ function sourceSignalRowToSnapshotSignal(row: SourceSignalRow): SnapshotSignal {
     person: jsonObjectValue<SnapshotSignal["person"]>(metadata.person),
     previewImage: jsonObjectValue<SnapshotSignal["previewImage"]>(row.previewImage),
     timeline,
+    externalContext: jsonObjectValue<SnapshotSignal["externalContext"]>(metadata.externalContext),
   };
 }
 

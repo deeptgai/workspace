@@ -92,6 +92,7 @@ export async function replaceSnapshotSignals(
           person: jsonOrNull(signal.person),
           previewImage: jsonOrNull(signal.previewImage),
           timeline: jsonOrNull(signal.timeline),
+          externalContext: jsonOrNull(signal.externalContext),
           sortAt: signalSortAt(signal),
           status: "pending",
           resolution: Prisma.JsonNull,
@@ -179,6 +180,9 @@ export async function snapshotSignalsAsDocumentSignals(
       : undefined,
     timeline: row.timeline && typeof row.timeline === "object" && !Array.isArray(row.timeline)
       ? row.timeline as SnapshotSignal["timeline"]
+      : undefined,
+    externalContext: row.externalContext && typeof row.externalContext === "object" && !Array.isArray(row.externalContext)
+      ? row.externalContext as SnapshotSignal["externalContext"]
       : undefined,
   }));
 }

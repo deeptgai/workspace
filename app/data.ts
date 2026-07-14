@@ -425,6 +425,7 @@ async function sourceSignalsAsDocumentSignals(sourceId: string): Promise<Snapsho
       person,
       previewImage: jsonObjectValue<SnapshotSignal["previewImage"]>(row.previewImage),
       timeline,
+      externalContext: jsonObjectValue<SnapshotSignal["externalContext"]>(metadata.externalContext),
     };
   });
 }
@@ -712,6 +713,7 @@ async function snapshotSignalsAsDocumentSignals(snapshotId: string): Promise<Sna
     person: jsonObjectValue<SnapshotSignal["person"]>(row.person),
     previewImage: jsonObjectValue<SnapshotSignal["previewImage"]>(row.previewImage),
     timeline: jsonObjectValue<SnapshotSignal["timeline"]>(row.timeline),
+    externalContext: jsonObjectValue<SnapshotSignal["externalContext"]>(row.externalContext),
   }));
 }
 

@@ -366,6 +366,7 @@ model SnapshotSignal {
   person           Json?
   previewImage     Json?
   timeline         Json?
+  externalContext  Json?
   sortAt           DateTime?
   status           String    @default("pending")
   resolution       Json?

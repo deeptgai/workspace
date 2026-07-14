@@ -91,6 +91,24 @@ export type SnapshotSignalTimeline = {
   primaryEvidenceItemId?: string;
 };
 
+export type SnapshotExternalFact = {
+  claim: string;
+  sourceTitle: string;
+  sourceUrl: string;
+  retrievedAt: string;
+  confidence: number;
+};
+
+export type SnapshotExternalContext = {
+  provider: "wikipedia";
+  entityName: string;
+  entityType: "person" | "company" | "product" | "technology" | "book" | "place" | "event" | "concept" | "other";
+  canonicalUrl?: string;
+  summary?: string;
+  facts: SnapshotExternalFact[];
+  warnings?: string[];
+};
+
 export type SnapshotSignal = {
   id: string;
   kind: SnapshotSignalKind;
@@ -106,6 +124,7 @@ export type SnapshotSignal = {
   person?: SnapshotSignalPerson;
   previewImage?: SnapshotSignalPreviewImage;
   timeline?: SnapshotSignalTimeline;
+  externalContext?: SnapshotExternalContext;
 };
 
 export type ChannelSnapshotHeroTheme = {

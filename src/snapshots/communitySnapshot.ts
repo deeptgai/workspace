@@ -22,6 +22,7 @@ import { enrichSignalsWithTimeline } from "./signalTimeline.js";
 import { sortSignalsDescending } from "./signalOrdering.js";
 import { replaceSnapshotSignals } from "../signals/snapshotSignals.js";
 import { snapshotSignalsAsDocumentSignals } from "../signals/snapshotSignals.js";
+import { enrichSignalsWithWikipedia } from "../signals/wikipediaEnrichment.js";
 import { patchSnapshotPipeline } from "./pipeline.js";
 import {
   contentWhereForAnalysisWindow,
@@ -2277,15 +2278,18 @@ async function completeSnapshotIfReady(
     return section ? [sectionFromDbRow(section)] : [];
   });
   const extractedSignals = await expandGroupThreadEvidence(prisma, context, buildSnapshotSignals(orderedSections));
-  const signals = sortSignalsDescending((await enrichSignalsWithTimeline(prisma, chat.id, extractedSignals)).map((signal) => {
+  const timelineSignals = await enrichSignalsWithTimeline(prisma, chat.id, extractedSignals);
+  const externalContextSignals = await enrichSignalsWithWikipedia(aiConfig, timelineSignals, (progress) => {
+    logAgent(options ?? {}, "agent:signal.wikipedia:progress", progress);
+  });
+  const signals = sortSignalsDescending(externalContextSignals.map((signal) => {
     const previousSignal = previousSignalsById.get(signal.id);
 
-    return previousSignal?.previewImage && !signal.previewImage
-      ? {
-          ...signal,
-          previewImage: previousSignal.previewImage,
-        }
-      : signal;
+    return {
+      ...signal,
+      previewImage: signal.previewImage ?? previousSignal?.previewImage,
+      externalContext: signal.externalContext ?? previousSignal?.externalContext,
+    };
   }));
   const previousHeroTheme = jsonObjectValue<ChannelSnapshotHeroTheme>(previousCompletedSnapshot?.heroTheme);
   const previousCoverImage = jsonObjectValue<SnapshotGeneratedImage>(previousCompletedSnapshot?.coverImage);

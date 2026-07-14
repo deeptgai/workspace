@@ -110,6 +110,9 @@ export async function generateAndStoreSignalPreviewImage(
         timeline: tableSignal.timeline && typeof tableSignal.timeline === "object" && !Array.isArray(tableSignal.timeline)
           ? tableSignal.timeline as SnapshotSignal["timeline"]
           : undefined,
+        externalContext: tableSignal.externalContext && typeof tableSignal.externalContext === "object" && !Array.isArray(tableSignal.externalContext)
+          ? tableSignal.externalContext as SnapshotSignal["externalContext"]
+          : undefined,
       } satisfies SnapshotSignal
     : null;
 
