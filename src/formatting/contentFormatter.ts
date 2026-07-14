@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import type { AiConfig } from "../ai/config.js";
 import { createChatCompletion } from "../ai/chatClient.js";
+import { CONTENT_FORMATTER_SYSTEM_PROMPT } from "../prompts/contentFormatter.js";
+import { JSON_REPAIR_SYSTEM_PROMPT } from "../prompts/jsonRepair.js";
 
 type FormatContentOptions = {
   itemId: string;
@@ -28,21 +30,31 @@ type FormatterResponse = {
   notes?: string[];
 };
 
-const SYSTEM_PROMPT = [
-  "Ты аккуратный редактор-форматтер русскоязычных постов и комментариев.",
-  "Твоя задача: улучшить читаемость текста, не переписывая автора.",
-  "Правила:",
-  "- Не добавляй факты, выводы, ссылки, эмодзи или примеры.",
-  "- Не удаляй важные фразы и не меняй смысл.",
-  "- Сохраняй авторский тон и порядок мыслей.",
-  "- Исправляй только визуальный хаос: абзацы, списки, цитаты, акценты.",
-  "- Длинные перечисления превращай в Markdown-списки.",
-  "- Ключевые слова и короткие смысловые акценты выделяй через **жирный**.",
-  "- Не добавляй новые заголовки; Markdown-заголовок допустим только если заголовок уже явно был в оригинале.",
-  "- Если текст уже хорошо оформлен, верни его почти без изменений и changed=false.",
-  "- Ссылки, @username, хэштеги и числа сохраняй как в оригинале.",
-  "Верни только JSON: {\"formattedText\":\"markdown\",\"changed\":true,\"confidence\":0.9,\"notes\":[\"...\"]}.",
-].join("\n");
+const FORMATTER_RESPONSE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    formattedText: {
+      type: "string",
+      description: "Formatted Markdown text.",
+    },
+    changed: {
+      type: "boolean",
+    },
+    confidence: {
+      type: "number",
+      minimum: 0,
+      maximum: 1,
+    },
+    notes: {
+      type: "array",
+      items: {
+        type: "string",
+      },
+    },
+  },
+  required: ["formattedText", "changed", "confidence", "notes"],
+};
 
 function textHash(text: string) {
   return createHash("sha256").update(text).digest("hex");
@@ -64,7 +76,7 @@ function extractJson(value: string) {
   return match[0];
 }
 
-function parseFormatterResponse(value: string): Required<Pick<FormatterResponse, "formattedText" | "changed">> & FormatterResponse {
+function normalizeFormatterResponse(value: string): Required<Pick<FormatterResponse, "formattedText" | "changed">> & FormatterResponse {
   const parsed = JSON.parse(extractJson(value)) as FormatterResponse;
   const formattedText = typeof parsed.formattedText === "string" ? parsed.formattedText.trim() : "";
 
@@ -80,6 +92,46 @@ function parseFormatterResponse(value: string): Required<Pick<FormatterResponse,
       ? parsed.notes.filter((note): note is string => typeof note === "string" && note.trim().length > 0).slice(0, 8)
       : undefined,
   };
+}
+
+async function parseFormatterResponse(
+  aiConfig: AiConfig,
+  value: string,
+  fallbackText: string,
+): Promise<Required<Pick<FormatterResponse, "formattedText" | "changed">> & FormatterResponse> {
+  try {
+    return normalizeFormatterResponse(value);
+  } catch (error) {
+    try {
+      const repaired = await createChatCompletion(aiConfig, [
+        {
+          role: "system",
+          content: JSON_REPAIR_SYSTEM_PROMPT,
+        },
+        {
+          role: "user",
+          content: [
+            "Repair this content formatter response into the expected JSON object.",
+            "Expected keys: formattedText, changed, confidence, notes.",
+            "Original parse error:",
+            error instanceof Error ? error.message : String(error),
+            "",
+            "Broken response:",
+            value,
+          ].join("\n"),
+        },
+      ], { json: true });
+
+      return normalizeFormatterResponse(repaired);
+    } catch {
+      return {
+        formattedText: fallbackText,
+        changed: false,
+        confidence: 0,
+        notes: ["formatter-json-repair-failed"],
+      };
+    }
+  }
 }
 
 export async function formatContentItem(
@@ -131,7 +183,7 @@ export async function formatContentItem(
   const content = await createChatCompletion(aiConfig, [
     {
       role: "system",
-      content: SYSTEM_PROMPT,
+      content: CONTENT_FORMATTER_SYSTEM_PROMPT,
     },
     {
       role: "user",
@@ -142,8 +194,13 @@ export async function formatContentItem(
         originalText,
       ].join("\n\n"),
     },
-  ], { json: true });
-  const formatted = parseFormatterResponse(content);
+  ], {
+    schema: {
+      name: "content_formatter",
+      schema: FORMATTER_RESPONSE_SCHEMA,
+    },
+  });
+  const formatted = await parseFormatterResponse(aiConfig, content, originalText);
 
   await prisma.contentItemFormat.upsert({
     where: {

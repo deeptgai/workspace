@@ -51,23 +51,6 @@ export function makePaidSectionInvoicePayload(input: {
 }
 
 export function parsePaidSectionInvoicePayload(payload: string): PaidSectionInvoicePayload | null {
-  const [legacySectionId, legacySourceId, legacyTelegramId] = payload.split(":");
-
-  if (
-    isPaidSectionId(legacySectionId) &&
-    legacySourceId &&
-    legacyTelegramId &&
-    /^\d+$/.test(legacyTelegramId) &&
-    payload.split(":").length === 3
-  ) {
-    return {
-      product: paidSectionProduct(legacySectionId),
-      sectionId: legacySectionId,
-      sourceId: legacySourceId,
-      telegramId: BigInt(legacyTelegramId),
-    };
-  }
-
   const [namespace, sectionId, sourceId, kind, id] = payload.split(":");
 
   if (namespace !== "section" || !isPaidSectionId(sectionId) || !sourceId || !kind || !id) {

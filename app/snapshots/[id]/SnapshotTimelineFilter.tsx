@@ -88,7 +88,7 @@ export function SnapshotTimelineFilter({
           onTouchEnd={(event) => commitCurrentValue(event.currentTarget)}
         />
       </div>
-      {ticks.length ? (
+      {ticks.length || signalDots.length ? (
         <div className="relative mx-2 mt-2 h-10" aria-hidden="true">
           {signalDots.map((dot) => (
             <span

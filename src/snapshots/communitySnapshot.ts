@@ -3,14 +3,12 @@ import { createChatCompletion } from "../ai/chatClient.js";
 import type { AiConfig } from "../ai/config.js";
 import { loadEmbeddingsConfig } from "../embeddings/config.js";
 import { searchMessages, type SearchMessageResult } from "../rag/searchMessages.js";
-import { canGenerateSignalPreview } from "../images/falSignalPreview.js";
-import { enqueueContentFormattingJob, enqueueSignalPreviewImageJob, enqueueSnapshotCoverImageJob, enqueueSourceSignalCurationJob } from "../queue/enqueue.js";
+import { enqueueContentFormattingJob, enqueueSnapshotCoverImageJob, enqueueSourceSignalCurationJob } from "../queue/enqueue.js";
 import {
   CHANNEL_SNAPSHOT_SCHEMA_VERSION,
   type ChannelSnapshotDocument,
   type ChannelSnapshotHeroTheme,
   type ChannelSnapshotItem,
-  type ChannelSnapshotPeopleSegment,
   type ChannelSnapshotSection,
   type ChannelSnapshotSectionId,
   type SnapshotSignal,
@@ -34,6 +32,15 @@ import {
   snapshotAnalysisWindowToJson,
   type SnapshotAnalysisWindow,
 } from "./analysisState.js";
+import { JSON_REPAIR_SYSTEM_PROMPT } from "../prompts/jsonRepair.js";
+import {
+  CHANNEL_SUMMARY_SYSTEM_PROMPT,
+  HERO_THEME_SYSTEM_PROMPT,
+  SIGNAL_AGENTS,
+  buildSectionAgentSystemPrompt,
+  buildSignalSearchPlannerSystemPrompt,
+  type SignalAgentDefinition,
+} from "../prompts/snapshotAgents.js";
 
 export type GenerateCommunitySnapshotOptions = {
   chat: Source;
@@ -52,19 +59,45 @@ export type GenerateCommunitySnapshotResult = {
   }>;
 };
 
-type SignalAgentDefinition = {
-  id: ChannelSnapshotSectionId;
-  title: string;
-  agent: string;
-  query: string;
-  instruction: string;
-  maxItems: number;
-};
-
 type SectionAgentOutput = {
   summary?: string;
   items?: Array<Partial<ChannelSnapshotItem>>;
-  segments?: Array<Partial<ChannelSnapshotPeopleSegment>>;
+};
+
+type SectionAgentSearchPlan = {
+  enoughEvidence?: boolean;
+  reason?: string;
+  queries?: Array<{
+    query?: string;
+    reason?: string;
+  }>;
+};
+
+type ConversationWindowItem = {
+  id: string;
+  externalId: string;
+  kind: string;
+  text: string | null;
+  publishedAt: Date;
+  engagementScore: number;
+  actor: {
+    externalId: string;
+    username: string | null;
+    firstName: string | null;
+    lastName: string | null;
+  } | null;
+};
+
+type ConversationWindow = {
+  anchorExternalId: string;
+  items: Array<ConversationWindowItem & { isAnchor: boolean }>;
+};
+
+type ThreadEvidenceItem = {
+  externalId: string;
+  text: string | null;
+  publishedAt: Date;
+  replyToExternalId: string | null;
 };
 
 type ChannelSummaryAgentOutput = {
@@ -77,6 +110,176 @@ const ALLOWED_PRIORITIES = new Set<SnapshotItemPriority>(["high", "medium", "low
 const HERO_PALETTES = ["emerald", "indigo", "amber", "rose", "slate", "cyan"] as const;
 const HERO_MOTIFS = ["network", "notes", "city", "market", "studio", "landscape"] as const;
 const SNAPSHOT_SUMMARY_MAX_LENGTH = 240;
+const CHANNEL_SUMMARY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    summary: {
+      type: "string",
+    },
+  },
+  required: ["summary"],
+};
+const HERO_THEME_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    palette: {
+      type: "string",
+      enum: HERO_PALETTES,
+    },
+    motif: {
+      type: "string",
+      enum: HERO_MOTIFS,
+    },
+    mood: {
+      type: "string",
+    },
+    concept: {
+      type: "string",
+    },
+    imagePrompt: {
+      type: "string",
+    },
+  },
+  required: ["palette", "motif", "mood", "concept", "imagePrompt"],
+};
+const SECTION_SEARCH_PLAN_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    enoughEvidence: {
+      type: "boolean",
+    },
+    reason: {
+      type: "string",
+    },
+    queries: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          query: {
+            type: "string",
+          },
+          reason: {
+            type: "string",
+          },
+        },
+        required: ["query", "reason"],
+      },
+    },
+  },
+  required: ["enoughEvidence", "reason", "queries"],
+};
+const SECTION_AGENT_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    summary: {
+      type: "string",
+    },
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          title: {
+            type: "string",
+          },
+          description: {
+            type: "string",
+          },
+          url: {
+            type: "string",
+          },
+          actorExternalId: {
+            type: "string",
+          },
+          personUsername: {
+            type: "string",
+          },
+          personName: {
+            type: "string",
+          },
+          score: {
+            type: "string",
+          },
+          priority: {
+            type: "string",
+            enum: ["high", "medium", "low", ""],
+          },
+          tags: {
+            type: "array",
+            items: {
+              type: "string",
+            },
+          },
+          confidence: {
+            type: "number",
+            minimum: 0,
+            maximum: 1,
+          },
+          metrics: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                key: {
+                  type: "string",
+                },
+                label: {
+                  type: "string",
+                },
+                value: {
+                  type: "string",
+                },
+              },
+              required: ["key", "label", "value"],
+            },
+          },
+          evidence: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                itemId: {
+                  type: "string",
+                },
+                quote: {
+                  type: "string",
+                },
+                reason: {
+                  type: "string",
+                },
+              },
+              required: ["itemId", "quote", "reason"],
+            },
+          },
+        },
+        required: [
+          "title",
+          "description",
+          "url",
+          "actorExternalId",
+          "personUsername",
+          "personName",
+          "score",
+          "priority",
+          "tags",
+          "confidence",
+          "metrics",
+          "evidence",
+        ],
+      },
+    },
+  },
+  required: ["summary", "items"],
+};
 const STRUCTURAL_DISPLAY_TAGS = new Set([
   "идея",
   "идеи",
@@ -211,16 +414,6 @@ type SnapshotContext = {
       publishedAt: Date;
     }>;
   }>;
-  postCommentSegments: Array<{
-    postExternalId: string;
-    postText: string | null;
-    commenters: Array<{
-      externalId: string;
-      username: string | null;
-      name: string;
-      commentText: string | null;
-    }>;
-  }>;
   messageCount: number;
   embeddingCount: number;
   oldestMessageDate: Date | null;
@@ -229,97 +422,6 @@ type SnapshotContext = {
 };
 
 const SNAPSHOT_KIND = "channel_structured_snapshot";
-
-export const SIGNAL_AGENTS: SignalAgentDefinition[] = [
-  {
-    id: "ideas",
-    title: "Идеи",
-    agent: "IdeaSignalAgent",
-    query: "ideas theses beliefs principles positioning product thinking business ideas",
-    instruction: "Найди сильные идеи и тезисы, которые подписчик может забрать себе. Каждая item — одна самостоятельная идея, не пересказ поста. Объясни, чем она полезна и где подтверждается.",
-    maxItems: 8,
-  },
-  {
-    id: "pains",
-    title: "Боли",
-    agent: "PainSignalAgent",
-    query: "pain points problems frustration struggle objections requests needs difficult work",
-    instruction: "Найди боли и напряжения, где читатель может узнать себя: что сложно, неприятно, тормозит рост, требует решения. Для каналов без комментариев формулируй боли как осторожные гипотезы по текстам автора.",
-    maxItems: 8,
-  },
-  {
-    id: "risks",
-    title: "Риски",
-    agent: "RiskSignalAgent",
-    query: "risks threats weak signals failure modes constraints blockers reputation legal financial operational risk",
-    instruction: "Найди риски: что может сломаться, ухудшить результат, создать потери, конфликт, репутационный или операционный ущерб. Формулируй как наблюдаемый риск с причиной, возможным последствием и мягкой мерой снижения. Не драматизируй и не выдумывай угрозы без evidence.",
-    maxItems: 7,
-  },
-  {
-    id: "hypotheses",
-    title: "Гипотезы",
-    agent: "HypothesisSignalAgent",
-    query: "hypotheses experiments opportunities maybe test launch new direction growth possibility",
-    instruction: "Найди гипотезы: идеи в проверке, возможные направления роста, коммерческие возможности, эксперименты и предположения автора. Каждая гипотеза должна иметь понятный следующий тест или критерий проверки.",
-    maxItems: 7,
-  },
-  {
-    id: "insights",
-    title: "Инсайты",
-    agent: "InsightSignalAgent",
-    query: "insights conclusions learnings non obvious lessons takeaways what works why it matters",
-    instruction: "Найди неочевидные выводы и уроки, которые можно применить без чтения всей ленты. Инсайт должен быть сильнее пересказа: формулируй как вывод из нескольких наблюдений или сильного поста.",
-    maxItems: 8,
-  },
-  {
-    id: "trends",
-    title: "Тренды",
-    agent: "TrendSignalAgent",
-    query: "trends patterns shifts repeated signals dynamics market audience behavior technology changes",
-    instruction: "Найди тренды и повторяющиеся сдвиги: что меняется со временем в темах автора, аудитории, рынке, технологиях, каналах продаж или поведении подписчиков. Тренд должен опираться на несколько наблюдений или явный тезис автора, а не быть единичным фактом.",
-    maxItems: 7,
-  },
-  {
-    id: "events",
-    title: "События",
-    agent: "EventSignalAgent",
-    query: "events launches meetings deals milestones announcements dates happened completed started won closed moved",
-    instruction: "Найди события: конкретные произошедшие или запланированные моменты, сделки, запуски, встречи, переезды, публикации, достижения, дедлайны. Каждое событие должно иметь понятный контекст, дату/период из evidence, участников или значение для читателя.",
-    maxItems: 8,
-  },
-  {
-    id: "materials",
-    title: "Материалы",
-    agent: "MaterialSignalAgent",
-    query: "links youtube books articles posts resources references recommendations materials",
-    instruction: "Собери материалы: книги, видео, статьи, внешние посты, ссылки и рекомендации. Не выдумывай URL; если точной ссылки нет в evidence, оставь ее в metrics как mention_type/source_context, но не добавляй url.",
-    maxItems: 10,
-  },
-  {
-    id: "tools",
-    title: "Инструменты",
-    agent: "ToolKnowledgeAgent",
-    query: "tools methods frameworks apps platforms techniques CRM BI Jira ChatGPT SEO security",
-    instruction: "Собери инструменты в широком смысле: сервисы, методы, приемы работы, фреймворки, связки систем и практики, которые читатель может повторить у себя. Не смешивай с материалами для чтения/просмотра.",
-    maxItems: 12,
-  },
-  {
-    id: "places",
-    title: "Места",
-    agent: "PlaceSignalAgent",
-    query: "places locations city cafe park bay station travel Saint Petersburg context atmosphere",
-    instruction: "Найди места, которые имеют смысловую роль в канале: где происходили важные события, что дает атмосферу, энергию, нетворк или контекст автора. Не добавляй место, если оно не упоминалось явно.",
-    maxItems: 6,
-  },
-  {
-    id: "people",
-    title: "Люди",
-    agent: "PeopleSignalAgent",
-    query: "comments people commenters leads pain points buyer intent objections requests audience participants",
-    instruction: "Собери людей только по конкретным пользователям из комментариев и явным людям из постов. Каждый item — один конкретный человек. Опиши наблюдаемый интерес, сегменты, почему с ним может быть полезно познакомиться и мягкий повод для контакта. Не оценивай личность, не делай чувствительные выводы, опирайся только на evidence.",
-    maxItems: 12,
-  },
-];
 
 const SECTION_ORDER: ChannelSnapshotSectionId[] = [
   ...SIGNAL_AGENTS.map((signalGroup) => signalGroup.id),
@@ -409,6 +511,37 @@ function formatMessageEvidence(messages: SearchMessageResult[]): string {
     .join("\n");
 }
 
+function actorLabel(actor: ConversationWindowItem["actor"]) {
+  if (!actor) {
+    return "unknown";
+  }
+
+  return actor.username
+    ? `@${actor.username}`
+    : [actor.firstName, actor.lastName].filter(Boolean).join(" ") || actor.externalId;
+}
+
+function formatConversationWindows(windows: ConversationWindow[]) {
+  if (!windows.length) {
+    return "";
+  }
+
+  return windows
+    .map((window, index) => [
+      `Window ${index + 1}; anchor=${window.anchorExternalId}`,
+      ...window.items.map((item) => [
+        `- id=${item.externalId}`,
+        item.isAnchor ? "anchor=true" : null,
+        `publishedAt=${item.publishedAt.toISOString()}`,
+        `kind=${item.kind}`,
+        `actor=${actorLabel(item.actor)}`,
+        `engagement=${item.engagementScore.toFixed(2)}`,
+        `text="${compactText(item.text)}"`,
+      ].filter(Boolean).join(" | ")),
+    ].join("\n"))
+    .join("\n\n");
+}
+
 function formatTopMessages(context: SnapshotContext): string {
   return context.topMessages
     .map((message) => [
@@ -453,21 +586,172 @@ function formatPeopleSignals(context: SnapshotContext): string {
     .join("\n");
 }
 
-function formatPostCommentSegments(context: SnapshotContext): string {
-  if (context.postCommentSegments.length === 0) {
-    return "- no post/comment groups";
+function sectionAgentContextBlock(context: SnapshotContext) {
+  return [
+    "Контекст канала:",
+    JSON.stringify({
+      chatTitle: context.chat.title,
+      username: context.chat.username ? `@${context.chat.username}` : null,
+      type: context.chat.type,
+      messages: context.aggregate._count._all,
+      views: context.aggregate._sum.views ?? 0,
+      avgViews: Math.round(context.aggregate._avg.views ?? 0),
+      forwards: context.aggregate._sum.forwards ?? 0,
+      reactions: context.aggregate._sum.reactionsTotal ?? 0,
+      replies: context.aggregate._sum.repliesCount ?? 0,
+      avgEngagement: Number((context.aggregate._avg.engagementScore ?? 0).toFixed(2)),
+    }, null, 2),
+    "",
+    "Top messages by engagement:",
+    formatTopMessages(context) || "- none",
+    "",
+    "People/commenter signals:",
+    formatPeopleSignals(context),
+  ].join("\n");
+}
+
+function uniqueSearchQueries(params: {
+  definition: SignalAgentDefinition;
+  plan: SectionAgentSearchPlan;
+  usedQueries: Set<string>;
+  includeBaseQuery: boolean;
+  remaining: number;
+}) {
+  const candidates = [
+    ...(params.includeBaseQuery ? [params.definition.query] : []),
+    ...(params.plan.queries ?? []).flatMap((item) => {
+      const query = item.query?.trim();
+
+      return query ? [query] : [];
+    }),
+  ];
+  const seen = new Set(params.usedQueries);
+
+  return candidates.flatMap((query) => {
+    const normalized = query.toLowerCase().replace(/\s+/g, " ").trim();
+
+    if (!normalized || seen.has(normalized)) {
+      return [];
+    }
+
+    seen.add(normalized);
+    return [query.trim()];
+  }).slice(0, Math.max(0, params.remaining));
+}
+
+function mergeEvidence(results: SearchMessageResult[][]) {
+  const byItemId = new Map<string, SearchMessageResult>();
+
+  for (const result of results.flat()) {
+    const current = byItemId.get(result.itemId);
+
+    if (!current || result.similarity > current.similarity) {
+      byItemId.set(result.itemId, result);
+    }
   }
 
-  return context.postCommentSegments.map((segment) => [
-    `- candidateId=post-${segment.postExternalId}`,
-    `postExternalId=${segment.postExternalId}`,
-    `postText="${compactText(segment.postText, 260)}"`,
-    `people=${segment.commenters.map((person) => [
-      person.externalId,
-      person.username ? `@${person.username}` : person.name,
-      `"${compactText(person.commentText, 90)}"`,
-    ].join(":")).join(" ; ")}`,
-  ].join(" | ")).join("\n");
+  return [...byItemId.values()]
+    .sort((left, right) => {
+      const scoreDelta = (right.similarity + right.engagementScore / 1000) -
+        (left.similarity + left.engagementScore / 1000);
+
+      return scoreDelta || right.publishedAt.getTime() - left.publishedAt.getTime();
+    })
+    .slice(0, Number(process.env.SNAPSHOT_SECTION_AGENT_EVIDENCE_LIMIT || "24"));
+}
+
+async function buildConversationWindows(
+  prisma: PrismaClient,
+  context: SnapshotContext,
+  evidence: SearchMessageResult[],
+): Promise<ConversationWindow[]> {
+  if (context.chat.type !== "group") {
+    return [];
+  }
+
+  const windowCount = Number(process.env.SNAPSHOT_RAG_CONTEXT_WINDOWS || "8");
+  const beforeCount = Number(process.env.SNAPSHOT_RAG_CONTEXT_BEFORE || "4");
+  const afterCount = Number(process.env.SNAPSHOT_RAG_CONTEXT_AFTER || "4");
+  const anchors = evidence.slice(0, windowCount);
+  const select = {
+    id: true,
+    externalId: true,
+    kind: true,
+    text: true,
+    publishedAt: true,
+    engagementScore: true,
+    actor: {
+      select: {
+        externalId: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+      },
+    },
+  } satisfies Prisma.ContentItemSelect;
+  const windows: ConversationWindow[] = [];
+
+  for (const anchorEvidence of anchors) {
+    const anchor = await prisma.contentItem.findUnique({
+      where: {
+        id: anchorEvidence.itemId,
+      },
+      select,
+    });
+
+    if (!anchor) {
+      continue;
+    }
+
+    const [before, after] = await Promise.all([
+      prisma.contentItem.findMany({
+        where: contentWhereForAnalysisWindow(context.analysisWindow, {
+          publishedAt: {
+            lt: anchor.publishedAt,
+          },
+        }),
+        orderBy: [
+          {
+            publishedAt: "desc",
+          },
+          {
+            externalId: "desc",
+          },
+        ],
+        take: beforeCount,
+        select,
+      }),
+      prisma.contentItem.findMany({
+        where: contentWhereForAnalysisWindow(context.analysisWindow, {
+          publishedAt: {
+            gt: anchor.publishedAt,
+          },
+        }),
+        orderBy: [
+          {
+            publishedAt: "asc",
+          },
+          {
+            externalId: "asc",
+          },
+        ],
+        take: afterCount,
+        select,
+      }),
+    ]);
+
+    const items = [...before.reverse(), anchor, ...after].map((item) => ({
+      ...item,
+      isAnchor: item.id === anchor.id,
+    }));
+
+    windows.push({
+      anchorExternalId: anchor.externalId,
+      items,
+    });
+  }
+
+  return windows;
 }
 
 function extractJsonObject(content: string) {
@@ -499,12 +783,7 @@ async function parseJsonObject<T>(
     const repaired = await createChatCompletion(aiConfig, [
       {
         role: "system",
-        content: [
-          "Ты исправляешь сломанный JSON.",
-          "Верни только валидный JSON object без Markdown и без code fence.",
-          "Не добавляй новых фактов и не меняй смысл данных.",
-          "Исправь только синтаксис: кавычки, запятые, экранирование, обрезанные строки.",
-        ].join("\n"),
+        content: JSON_REPAIR_SYSTEM_PROMPT,
       },
       {
         role: "user",
@@ -622,56 +901,6 @@ function normalizeMetricKey(value: unknown): string | null {
   return ALLOWED_METRIC_KEYS.has(key) ? key : null;
 }
 
-function normalizePeopleSegments(value: unknown): ChannelSnapshotPeopleSegment[] | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-
-  const segments = value.flatMap((segment, index) => {
-    if (!segment || typeof segment !== "object") {
-      return [];
-    }
-
-    const candidate = segment as {
-      id?: unknown;
-      title?: unknown;
-      summary?: unknown;
-      sourceCandidateIds?: unknown;
-      actorExternalIds?: unknown;
-      evidence?: unknown;
-    };
-    const sourceCandidateIds = Array.isArray(candidate.sourceCandidateIds)
-      ? [...new Set(candidate.sourceCandidateIds.flatMap((id) => (
-          typeof id === "string" && id.trim() ? [id.trim()] : []
-        )))]
-      : [];
-    const actorExternalIds = Array.isArray(candidate.actorExternalIds)
-      ? [...new Set(candidate.actorExternalIds.flatMap((id) => (
-          typeof id === "string" && id.trim() ? [id.trim()] : []
-        )))]
-      : [];
-
-    if (!actorExternalIds.length && !sourceCandidateIds.length) {
-      return [];
-    }
-
-    return [{
-      id: typeof candidate.id === "string" && candidate.id.trim()
-        ? candidate.id.trim().replace(/[^a-z0-9_-]+/giu, "-").toLowerCase()
-        : `segment-${index + 1}`,
-      title: typeof candidate.title === "string" && candidate.title.trim()
-        ? candidate.title.trim()
-        : `Сегмент ${index + 1}`,
-      summary: typeof candidate.summary === "string" ? candidate.summary : "",
-      sourceCandidateIds,
-      actorExternalIds,
-      evidence: normalizeEvidence(candidate.evidence),
-    }];
-  });
-
-  return segments.length ? segments : undefined;
-}
-
 function normalizeSectionOutput(definition: SignalAgentDefinition, output: SectionAgentOutput): ChannelSnapshotSection {
   const seenPeople = new Set<string>();
   const items = (output.items ?? []).flatMap((item) => {
@@ -728,43 +957,6 @@ function normalizeSectionOutput(definition: SignalAgentDefinition, output: Secti
     agent: definition.agent,
     summary: typeof output.summary === "string" ? output.summary : "",
     items,
-    segments: definition.id === "people" ? normalizePeopleSegments(output.segments) : undefined,
-  };
-}
-
-function applyPostCommentSegments(section: ChannelSnapshotSection, context: SnapshotContext): ChannelSnapshotSection {
-  if (section.id !== "people") {
-    return section;
-  }
-
-  const candidates = context.postCommentSegments.map((candidate) => ({
-    id: `post-${candidate.postExternalId}`,
-    title: compactText(candidate.postText, 72) || `Пост ${candidate.postExternalId}`,
-    summary: compactText(candidate.postText, 220),
-    actorExternalIds: candidate.commenters.map((person) => person.externalId),
-  }));
-  const peopleByCandidate = new Map(candidates.map((candidate) => [
-    candidate.id,
-    candidate.actorExternalIds,
-  ]));
-
-  const llmSegments = (section.segments ?? []).map((segment) => {
-    const candidatePeople = (segment.sourceCandidateIds ?? []).flatMap((candidateId) =>
-        peopleByCandidate.get(candidateId) ?? [],
-    );
-
-    return {
-      ...segment,
-      actorExternalIds: [...new Set([
-        ...segment.actorExternalIds,
-        ...candidatePeople,
-      ])],
-    };
-  }).filter((segment) => segment.actorExternalIds.length > 0);
-
-  return {
-    ...section,
-    segments: llmSegments,
   };
 }
 
@@ -787,7 +979,6 @@ function sectionToDbData(snapshotId: string, section: ChannelSnapshotSection, st
     status,
     summary: section.summary,
     items: section.items as Prisma.InputJsonValue,
-    segments: section.segments ? section.segments as Prisma.InputJsonValue : undefined,
     error: null,
     completedAt: status === "completed" ? new Date() : null,
   };
@@ -799,7 +990,6 @@ function sectionFromDbRow(row: {
   agent: string;
   summary: string | null;
   items: Prisma.JsonValue | null;
-  segments: Prisma.JsonValue | null;
 }): ChannelSnapshotSection {
   return {
     id: row.sectionId as ChannelSnapshotSectionId,
@@ -807,7 +997,6 @@ function sectionFromDbRow(row: {
     agent: row.agent,
     summary: row.summary ?? "",
     items: Array.isArray(row.items) ? row.items as ChannelSnapshotItem[] : [],
-    segments: Array.isArray(row.segments) ? row.segments as ChannelSnapshotPeopleSegment[] : undefined,
   };
 }
 
@@ -910,11 +1099,119 @@ function buildSnapshotSignals(sections: ChannelSnapshotSection[]): SnapshotSigna
             actorExternalId: item.actorExternalId,
             username: item.personUsername,
             name: item.personName || item.title,
-            segments: signalTags(section, item, kind).filter((tag) => tag !== "человек" && tag !== section.title).slice(0, 4),
           }
         : undefined,
     }));
   });
+}
+
+function mergeSignalEvidence(
+  evidence: SnapshotEvidenceRef[] | undefined,
+  additions: SnapshotEvidenceRef[],
+) {
+  const seen = new Set<string>();
+
+  return [...(evidence ?? []), ...additions].flatMap((item) => {
+    if (!item.itemId || seen.has(item.itemId)) {
+      return [];
+    }
+
+    seen.add(item.itemId);
+    return [item];
+  });
+}
+
+async function threadEvidenceForSignal(
+  prisma: PrismaClient,
+  context: SnapshotContext,
+  signal: SnapshotSignal,
+): Promise<SnapshotEvidenceRef[]> {
+  const anchorIds = [...new Set((signal.evidence ?? []).map((item) => item.itemId).filter(Boolean))];
+
+  if (!anchorIds.length) {
+    return [];
+  }
+
+  const maxItems = Number(process.env.SNAPSHOT_SIGNAL_THREAD_EVIDENCE_LIMIT || "12");
+  const maxRounds = Number(process.env.SNAPSHOT_SIGNAL_THREAD_EVIDENCE_ROUNDS || "4");
+  const itemsByExternalId = new Map<string, ThreadEvidenceItem>();
+  let frontier = new Set(anchorIds);
+
+  for (let round = 0; round < maxRounds && frontier.size && itemsByExternalId.size < maxItems; round += 1) {
+    const ids = [...frontier];
+    frontier = new Set<string>();
+
+    const items = await prisma.contentItem.findMany({
+      where: contentWhereForAnalysisWindow(context.analysisWindow, {
+        OR: [
+          {
+            externalId: {
+              in: ids,
+            },
+          },
+          {
+            replyToExternalId: {
+              in: ids,
+            },
+          },
+        ],
+      }),
+      orderBy: [
+        {
+          publishedAt: "asc",
+        },
+        {
+          externalId: "asc",
+        },
+      ],
+      take: Math.max(maxItems * 2, ids.length),
+      select: {
+        externalId: true,
+        text: true,
+        publishedAt: true,
+        replyToExternalId: true,
+      },
+    });
+
+    for (const item of items) {
+      const isNewItem = !itemsByExternalId.has(item.externalId);
+
+      if (!itemsByExternalId.has(item.externalId) && itemsByExternalId.size < maxItems) {
+        itemsByExternalId.set(item.externalId, item);
+      }
+
+      if (item.replyToExternalId && !itemsByExternalId.has(item.replyToExternalId)) {
+        frontier.add(item.replyToExternalId);
+      }
+
+      if (isNewItem && !ids.includes(item.externalId)) {
+        frontier.add(item.externalId);
+      }
+    }
+  }
+
+  return [...itemsByExternalId.values()]
+    .sort((left, right) => left.publishedAt.getTime() - right.publishedAt.getTime() || left.externalId.localeCompare(right.externalId))
+    .map((item) => ({
+      itemId: item.externalId,
+      quote: compactText(item.text, 220),
+      reason: anchorIds.includes(item.externalId) ? "anchor evidence" : "reply-thread context",
+    }));
+}
+
+async function expandGroupThreadEvidence(
+  prisma: PrismaClient,
+  context: SnapshotContext,
+  signals: SnapshotSignal[],
+) {
+  if (context.chat.type !== "group") {
+    return signals;
+  }
+
+  return Promise.all(signals.map(async (signal) => ({
+    ...signal,
+    evidence: mergeSignalEvidence(signal.evidence, await threadEvidenceForSignal(prisma, context, signal)),
+  })));
 }
 
 function stableIndex(value: string, modulo: number) {
@@ -990,19 +1287,7 @@ async function runChannelSummaryAgent(
     const content = await createChatCompletion(aiConfig, [
       {
         role: "system",
-        content: [
-          "Ты ChannelSummaryAgent для Hero-блока карты Telegram-канала.",
-          "Твоя задача — написать короткий тизер канала, а не сводку всех разделов.",
-          "Тизер показывается в самом верху сайта, поэтому он должен быть компактным: 1-2 коротких предложения, максимум 240 символов.",
-          "Опиши канал в целом: главная тема, для кого он полезен и какую практическую ценность дает карта сигналов.",
-          "Не перечисляй разделы, не делай список, не вставляй переносы строк, не пиши технические id и ссылки.",
-          "Пиши строго на русском, кроме названий брендов, компаний, технологий и username.",
-          "Верни только JSON object без Markdown и без code fence.",
-          "JSON schema:",
-          JSON.stringify({
-            summary: "1-2 short Russian sentences with the top-level channel summary, max 240 characters",
-          }),
-        ].join("\n"),
+        content: CHANNEL_SUMMARY_SYSTEM_PROMPT,
       },
       {
         role: "user",
@@ -1031,7 +1316,12 @@ async function runChannelSummaryAgent(
           sections.map((section) => `- ${section.title}: ${compactText(section.summary, 160)}`).join("\n") || "- none",
         ].join("\n"),
       },
-    ], { json: true });
+    ], {
+      schema: {
+        name: "channel_summary",
+        schema: CHANNEL_SUMMARY_SCHEMA,
+      },
+    });
     const output = await parseJsonObject<ChannelSummaryAgentOutput>(aiConfig, content, (error) => {
       logAgent(options ?? {}, "tool:channelSummaryAgent.repairJson:start", {
         error: error instanceof Error ? error.message : String(error),
@@ -1069,26 +1359,7 @@ async function generateHeroTheme(
     const content = await createChatCompletion(aiConfig, [
       {
         role: "system",
-        content: [
-          "Ты VisualThemeAgent для мини-приложения вокруг Telegram-канала.",
-          "Твоя задача — предложить визуальную тему hero-блока для карты сигналов канала.",
-          "Пиши строго JSON object без Markdown.",
-          "Не генерируй картинку. Дай направление для UI и будущей image generation.",
-          "palette выбери строго из: emerald, indigo, amber, rose, slate, cyan.",
-          "motif выбери строго из: network, notes, city, market, studio, landscape.",
-          "imagePrompt пиши на английском для генератора изображений. Без текста, логотипов, интерфейса и портретов.",
-          "Не иллюстрируй название канала буквально, если там метафора. Например, природные слова в названии переводятся в абстрактные метафоры роста, стратегии, портфеля или системности.",
-          "Не предлагай птиц, животных, буквальные деревья, лес, саванну или декоративные природные сцены, если канал не о природе.",
-          "Для каналов про IT, консалтинг, продажи, CRM, контент или продуктивность выбирай деловые и технологические визуальные метафоры.",
-          "JSON schema:",
-          JSON.stringify({
-            palette: "emerald | indigo | amber | rose | slate | cyan",
-            motif: "network | notes | city | market | studio | landscape",
-            mood: "short Russian mood",
-            concept: "short Russian visual concept",
-            imagePrompt: "English image generation prompt",
-          }),
-        ].join("\n"),
+        content: HERO_THEME_SYSTEM_PROMPT,
       },
       {
         role: "user",
@@ -1115,7 +1386,12 @@ async function generateHeroTheme(
           sections.map((section) => `- ${section.title}: ${compactText(section.summary, 220)}`).join("\n"),
         ].join("\n"),
       },
-    ], { json: true });
+    ], {
+      schema: {
+        name: "hero_theme",
+        schema: HERO_THEME_SCHEMA,
+      },
+    });
     const rawTheme = await parseJsonObject<HeroThemeAgentOutput>(aiConfig, content, (error) => {
       logAgent(options ?? {}, "tool:heroThemeAgent.repairJson:start", {
         error: error instanceof Error ? error.message : String(error),
@@ -1370,137 +1646,11 @@ async function buildSnapshotContext(
       };
     }),
   );
-  const postCommentSegments = chat.type === "group"
-    ? (await prisma.contentItem.findMany({
-        where: contentWhereForAnalysisWindow(analysisWindow, {
-          kind: "post",
-          actorId: {
-            not: null,
-          },
-          text: {
-            not: null,
-          },
-        }),
-        orderBy: {
-          engagementScore: "desc",
-        },
-        take: Number(process.env.SNAPSHOT_POST_SEGMENT_LIMIT || "25"),
-        select: {
-          externalId: true,
-          text: true,
-          actor: {
-            select: {
-              externalId: true,
-              username: true,
-              firstName: true,
-              lastName: true,
-            },
-          },
-        },
-      })).flatMap((message) => message.actor ? [{
-        postExternalId: message.externalId,
-        postText: message.text,
-        commenters: [{
-          externalId: message.actor.externalId,
-          username: message.actor.username,
-          name: [message.actor.firstName, message.actor.lastName].filter(Boolean).join(" ") || message.actor.username || "Пользователь",
-          commentText: message.text,
-        }],
-      }] : [])
-    : (await prisma.contentItem.findMany({
-        where: {
-          sourceId: chat.id,
-          kind: "post",
-          AND: [
-            {
-              OR: [
-                nestedContentWhereForAnalysisWindow(analysisWindow),
-                {
-                  children: {
-                    some: nestedContentWhereForAnalysisWindow(analysisWindow, {
-                      actorId: {
-                        not: null,
-                      },
-                    }),
-                  },
-                },
-              ],
-            },
-            {
-              children: {
-                some: {
-                  actorId: {
-                    not: null,
-                  },
-                },
-              },
-            },
-          ],
-        },
-        orderBy: [
-          {
-            repliesCount: "desc",
-          },
-          {
-            engagementScore: "desc",
-          },
-        ],
-        take: Number(process.env.SNAPSHOT_POST_SEGMENT_LIMIT || "25"),
-        select: {
-          externalId: true,
-          text: true,
-          children: {
-            where: nestedContentWhereForAnalysisWindow(analysisWindow, {
-              actorId: {
-                not: null,
-              },
-            }),
-            orderBy: {
-              engagementScore: "desc",
-            },
-            take: Number(process.env.SNAPSHOT_POST_SEGMENT_COMMENTS_LIMIT || "8"),
-            select: {
-              text: true,
-              actor: {
-                select: {
-                  externalId: true,
-                  username: true,
-                  firstName: true,
-                  lastName: true,
-                },
-              },
-            },
-          },
-        },
-      })).flatMap((post) => {
-        const seen = new Set<string>();
-        const commenters = post.children.flatMap((comment) => {
-          if (!comment.actor || seen.has(comment.actor.externalId)) {
-            return [];
-          }
-
-          seen.add(comment.actor.externalId);
-          return [{
-            externalId: comment.actor.externalId,
-            username: comment.actor.username,
-            name: [comment.actor.firstName, comment.actor.lastName].filter(Boolean).join(" ") || comment.actor.username || "Пользователь",
-            commentText: comment.text,
-          }];
-        });
-
-        return commenters.length ? [{
-          postExternalId: post.externalId,
-          postText: post.text,
-          commenters,
-        }] : [];
-      });
-
   return {
     chat,
     aggregate: aggregate as SnapshotAggregate,
     topMessages,
     topCommenters,
-    postCommentSegments,
     messageCount,
     embeddingCount,
     oldestMessageDate: dateRange._min.publishedAt,
@@ -1517,75 +1667,147 @@ async function runSectionAgent(
   embeddingsConfig: ReturnType<typeof loadEmbeddingsConfig>,
   options: GenerateCommunitySnapshotOptions,
 ): Promise<ChannelSnapshotSection> {
-  logAgent(options, "tool:rag.searchMessages:start", {
+  const maxRounds = Number(process.env.SNAPSHOT_SECTION_AGENT_MAX_ROUNDS || "2");
+  const maxSearches = Number(process.env.SNAPSHOT_SECTION_AGENT_MAX_SEARCHES || "6");
+  const maxSearchesPerRound = Number(process.env.SNAPSHOT_SECTION_AGENT_MAX_SEARCHES_PER_ROUND || "3");
+  const evidenceResults: SearchMessageResult[][] = [];
+  const ragLimit = Number(process.env.SNAPSHOT_SECTION_AGENT_RAG_LIMIT || "10");
+  const usedQueries = new Set<string>();
+  const queries: string[] = [];
+  let evidence: SearchMessageResult[] = [];
+  let conversationWindows: ConversationWindow[] = [];
+  let stopReason = "max_rounds";
+
+  for (let round = 1; round <= maxRounds && queries.length < maxSearches; round += 1) {
+    conversationWindows = await buildConversationWindows(prisma, context, evidence);
+    logAgent(options, "agent:section.plan:start", {
+      agent: definition.agent,
+      round,
+      maxRounds,
+      searchesUsed: queries.length,
+      maxSearches,
+      maxSearchesPerRound,
+      evidence: evidence.length,
+      conversationWindows: conversationWindows.length,
+      model: aiConfig.model,
+    });
+    const planContent = await createChatCompletion(aiConfig, [
+      {
+        role: "system",
+        content: buildSignalSearchPlannerSystemPrompt(definition),
+      },
+      {
+        role: "user",
+        content: [
+          `Группа сигналов: ${definition.title}`,
+          `Задача: ${definition.instruction}`,
+          `Базовый query: ${definition.query}`,
+          `Раунд: ${round}/${maxRounds}`,
+          `Осталось поисков: ${maxSearches - queries.length}`,
+          "",
+          "Уже выполненные RAG queries:",
+          queries.length ? queries.map((query, index) => `${index + 1}. ${query}`).join("\n") : "- none",
+          "",
+          sectionAgentContextBlock(context),
+          "",
+          "Current RAG hits:",
+          formatMessageEvidence(evidence) || "- none yet",
+          "",
+          context.chat.type === "group"
+            ? [
+                "Current conversation windows:",
+                formatConversationWindows(conversationWindows) || "- none yet",
+              ].join("\n")
+            : "",
+        ].join("\n"),
+      },
+    ], {
+      schema: {
+        name: "section_search_plan",
+        schema: SECTION_SEARCH_PLAN_SCHEMA,
+      },
+    });
+    const plan = await parseJsonObject<SectionAgentSearchPlan>(aiConfig, planContent, (error) => {
+      logAgent(options, "agent:section.plan.repairJson:start", {
+        agent: definition.agent,
+        round,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    const roundQueries = uniqueSearchQueries({
+      definition,
+      plan,
+      usedQueries,
+      includeBaseQuery: round === 1,
+      remaining: Math.min(maxSearches - queries.length, maxSearchesPerRound),
+    });
+    logAgent(options, "agent:section.plan:complete", {
+      agent: definition.agent,
+      round,
+      enoughEvidence: Boolean(plan.enoughEvidence),
+      reason: plan.reason,
+      queries: roundQueries,
+    });
+
+    if (plan.enoughEvidence && evidence.length > 0) {
+      stopReason = "enough_evidence";
+      break;
+    }
+
+    if (!roundQueries.length) {
+      stopReason = "no_more_queries";
+      break;
+    }
+
+    for (const query of roundQueries) {
+      const normalized = query.toLowerCase().replace(/\s+/g, " ").trim();
+      usedQueries.add(normalized);
+      queries.push(query);
+      logAgent(options, "tool:rag.searchMessages:start", {
+        agent: definition.agent,
+        round,
+        query,
+        index: queries.length,
+        maxSearches,
+        limit: ragLimit,
+      });
+      const result = await searchMessages(prisma, embeddingsConfig, {
+        sourceId: context.chat.id,
+        query,
+        limit: ragLimit,
+        ...searchWindowOptions(context.analysisWindow),
+      });
+      evidenceResults.push(result);
+      evidence = mergeEvidence(evidenceResults);
+      logAgent(options, "tool:rag.searchMessages:complete", {
+        agent: definition.agent,
+        round,
+        query,
+        results: result.length,
+        mergedEvidence: evidence.length,
+        topIds: result.slice(0, 5).map((message) => message.externalId),
+      });
+    }
+  }
+
+  conversationWindows = await buildConversationWindows(prisma, context, evidence);
+  logAgent(options, "agent:section.evidence:complete", {
     agent: definition.agent,
-    query: definition.query,
-    limit: 10,
-  });
-  const evidence = await searchMessages(prisma, embeddingsConfig, {
-    sourceId: context.chat.id,
-    query: definition.query,
-    limit: 10,
-    ...searchWindowOptions(context.analysisWindow),
-  });
-  logAgent(options, "tool:rag.searchMessages:complete", {
-    agent: definition.agent,
-    results: evidence.length,
-    topIds: evidence.slice(0, 5).map((message) => message.externalId),
+    queries: queries.length,
+    evidence: evidence.length,
+    conversationWindows: conversationWindows.length,
+    stopReason,
+    topIds: evidence.slice(0, 8).map((message) => message.externalId),
   });
 
-  logAgent(options, "tool:llm.createChatCompletion:start", {
+  logAgent(options, "agent:section.extract:start", {
     agent: definition.agent,
     model: aiConfig.model,
   });
   const content = await createChatCompletion(aiConfig, [
     {
       role: "system",
-      content: [
-        `Ты ${definition.agent}.`,
-        "Ты извлекаешь одну группу сигналов из Telegram-канала для карты пользы.",
-        "Пиши строго на русском, кроме названий брендов, компаний, технологий и username.",
-        "Для машинной логики используй только формализованные поля: priority и metrics.key. tags являются только короткими UI-метками для фильтрации карточек человеком.",
-        "priority может быть только: high, medium, low.",
-        "tags пиши как 2-5 коротких человекочитаемых меток на русском: 1-2 слова, без предложений, без itemId, без технических ключей, без snake_case, без английских machine tags. Бренды и технологии можно писать как в оригинале.",
-        "tags должны описывать тему, контекст или сегмент карточки: например AI, CRM, найм, фокус, книга, Youtube, стратегия, Петербург, продажи, редактура. Не копируй длинные названия постов, ссылок, инструментов или материалов целиком.",
-        "tags не должны повторять раздел меню или тип сигнала: идея/идеи, боль/боли, риск/риски, гипотеза/гипотезы, инсайт/инсайты, тренд/тренды, событие/события, материал/материалы, инструмент/инструменты, место/места, человек/люди, профиль/profile/peer.",
-        "metrics.key выбирай только из списка: profile, pain, lead_signal, offer, outreach_reason, intro_reason, helper_signal, question_signal, solution_need, contractor_need, similarity_reason, impact, effort, priority_reason, topic_strength, demand_signal, commercial_potential, content_pattern, recommendation_type, recommendation_source, recommended_action, mention_type, mentioned_entity, why_it_matters, source_context, time_window, digest_signal, learning_type, learning_asset, positioning_angle, author_thesis, audience_fit, discussion_prompt, tg_post_idea.",
-        "metric.label можешь писать на русском для чтения человеком, но UI не будет использовать label для логики.",
-        "Не выдумывай факты. Любой важный вывод должен ссылаться на itemId из evidence.",
-        "Не пиши itemId, post id, chat id, channel id, user id, provider id, отрицательные id вида -100... или технические ссылки в summary, title, description, score или metrics. Идентификаторы сообщений указывай только в массиве evidence.",
-        "Для людей используй только конкретных пользователей из People/commenter signals. Не создавай сегменты, архетипы или группы аудитории.",
-        definition.id === "people"
-          ? "Для people-сигналов верни три слоя данных: items как конкретные люди, tags как короткие темы/интересы человека и segments как группы людей. Каждый item должен быть строго одним конкретным человеком из People/commenter signals. Обязательно верни actorExternalId точно как в People/commenter signals. Если есть username, верни personUsername без @. personName верни из personName. Не пиши items вида 'Сегмент: ...'. Не объединяй нескольких людей в один item. Социальные роли и причину знакомства описывай в metrics с keys: profile, pain, lead_signal, offer, outreach_reason, intro_reason, helper_signal, question_signal, solution_need, contractor_need, similarity_reason. tags для людей должны быть сегментами интересов, например AI, CRM, нетворк, найм, продажи, фокус, Петербург, образование; не используй profile, peer, активный, человек. segments называй и объясняй по Post/comment segment candidates. Сделай примерно 5-8 осмысленных сегментов: не 3-5 слишком общих групп и не один сегмент на каждый пост. Люди могут быть в нескольких сегментах, это нормально. Backend сам добавит всех людей из этих постовых кандидатов, поэтому не пытайся вручную перечислить всех actorExternalIds. Для теплоты лида используй priority: high/medium/low."
-          : "",
-        "Верни только JSON object без Markdown и без code fence.",
-        "JSON schema:",
-        JSON.stringify({
-          summary: "string",
-          items: [{
-            title: "string",
-            description: "string",
-            url: "direct external URL optional, only when explicitly present in evidence",
-            actorExternalId: "string required for people section",
-            personUsername: "string optional without @",
-            personName: "string optional",
-            score: "short human-readable label optional",
-            priority: "high | medium | low optional",
-            tags: ["короткий UI-тег 1-2 слова", "например: AI", "например: найм"],
-            confidence: "number 0..1",
-            metrics: [{ key: "stable_machine_key", label: "human readable label", value: "string" }],
-            evidence: [{ itemId: "source item external id", quote: "short quote optional", reason: "why this evidence matters" }],
-          }],
-          segments: [{
-            id: "stable_slug",
-            title: "string",
-            summary: "string",
-            sourceCandidateIds: ["post-source-item-external-id"],
-            actorExternalIds: ["string"],
-            evidence: [{ itemId: "source item external id", quote: "short quote optional", reason: "why this evidence matters" }],
-          }],
-        }),
-      ].join("\n"),
+      content: buildSectionAgentSystemPrompt(definition),
     },
     {
       role: "user",
@@ -1594,35 +1816,31 @@ async function runSectionAgent(
         `Задача: ${definition.instruction}`,
         `Максимум items: ${definition.maxItems}`,
         "",
-        "Контекст канала:",
-        JSON.stringify({
-          chatTitle: context.chat.title,
-          username: context.chat.username ? `@${context.chat.username}` : null,
-          type: context.chat.type,
-          messages: context.aggregate._count._all,
-          views: context.aggregate._sum.views ?? 0,
-          avgViews: Math.round(context.aggregate._avg.views ?? 0),
-          forwards: context.aggregate._sum.forwards ?? 0,
-          reactions: context.aggregate._sum.reactionsTotal ?? 0,
-          replies: context.aggregate._sum.repliesCount ?? 0,
-          avgEngagement: Number((context.aggregate._avg.engagementScore ?? 0).toFixed(2)),
-        }, null, 2),
+        "RAG search plan:",
+        queries.map((query, index) => `${index + 1}. ${query}`).join("\n"),
+        `RAG stop reason: ${stopReason}`,
         "",
-        "Top messages by engagement:",
-        formatTopMessages(context) || "- none",
+        sectionAgentContextBlock(context),
         "",
-        "People/commenter signals:",
-        formatPeopleSignals(context),
-        "",
-        "Post/comment segment candidates:",
-        definition.id === "people" ? formatPostCommentSegments(context) : "- only used by PeopleSignalAgent",
-        "",
-        "Evidence from RAG:",
+        "RAG hits:",
         formatMessageEvidence(evidence) || "- none",
+        "",
+        context.chat.type === "group"
+          ? [
+              "Conversation windows around RAG hits:",
+              "Use these chronological windows to understand message order, replies, and local context. Cite concrete item ids from the windows/evidence.",
+              formatConversationWindows(conversationWindows) || "- no windows",
+            ].join("\n")
+          : "",
       ].join("\n"),
     },
-  ], { json: true });
-  logAgent(options, "tool:llm.createChatCompletion:complete", {
+  ], {
+    schema: {
+      name: "section_agent_output",
+      schema: SECTION_AGENT_OUTPUT_SCHEMA,
+    },
+  });
+  logAgent(options, "agent:section.extract:complete", {
     agent: definition.agent,
     chars: content.length,
   });
@@ -1893,7 +2111,7 @@ export async function generateCommunitySnapshotSection(
     const analysisWindow = await readSnapshotAnalysisWindow(prisma, snapshotId, options.chat.id)
       ?? fullSnapshotAnalysisWindow(options.chat.id);
     const context = await buildSnapshotContext(prisma, options.chat, embeddingsConfig.model, analysisWindow);
-    const rawSection = await withTimeout(
+    const section = await withTimeout(
       runSectionAgent(
         prisma,
         aiConfig,
@@ -1905,7 +2123,6 @@ export async function generateCommunitySnapshotSection(
       sectionAgentTimeoutMs,
       `${definition.agent} section`,
     );
-    const section = applyPostCommentSegments(rawSection, context);
 
     await prisma.sourceSnapshotSection.update({
       where: {
@@ -1918,7 +2135,6 @@ export async function generateCommunitySnapshotSection(
         status: "completed",
         summary: section.summary,
         items: section.items as Prisma.InputJsonValue,
-        segments: section.segments ? section.segments as Prisma.InputJsonValue : undefined,
         completedAt: new Date(),
       },
     });
@@ -2072,7 +2288,8 @@ async function completeSnapshotIfReady(
     const section = sections.find((candidate) => candidate.sectionId === sectionId);
     return section ? [sectionFromDbRow(section)] : [];
   });
-  const signals = sortSignalsDescending((await enrichSignalsWithTimeline(prisma, chat.id, buildSnapshotSignals(orderedSections))).map((signal) => {
+  const extractedSignals = await expandGroupThreadEvidence(prisma, context, buildSnapshotSignals(orderedSections));
+  const signals = sortSignalsDescending((await enrichSignalsWithTimeline(prisma, chat.id, extractedSignals)).map((signal) => {
     const previousSignal = previousSignalsById.get(signal.id);
 
     return previousSignal?.previewImage && !signal.previewImage
@@ -2294,42 +2511,11 @@ async function completeSnapshotIfReady(
     }
   }
 
-  const previewSignals = signals.filter((signal) => canGenerateSignalPreview(signal) && !signal.previewImage?.url);
-
-  try {
-    const previewJobs = await Promise.all(previewSignals.map((signal) => enqueueSignalPreviewImageJob({
-      snapshotId,
-      signalId: signal.id,
-    })));
-    await patchSnapshotPipeline(prisma, snapshotId, {
-      images: {
-        status: previewSignals.length ? "queued" : "completed",
-        previewsTotal: previewSignals.length,
-        previewsCompleted: 0,
-        previewJobIds: previewJobs.map((job) => String(job.id)),
-      },
-    });
-
-    logAgent(options ?? {}, "tool:signalPreviewImages:enqueued", {
-      snapshotId,
-      count: previewSignals.length,
-    });
-  } catch (error) {
-    await patchSnapshotPipeline(prisma, snapshotId, {
-      images: {
-        status: "failed",
-        previewsError: error instanceof Error ? error.message : String(error),
-      },
-      errors: [{
-        stage: "signal-preview-images",
-        message: error instanceof Error ? error.message : String(error),
-        at: new Date().toISOString(),
-      }],
-    });
-    logAgent(options ?? {}, "tool:signalPreviewImages:enqueueFailed", {
-      snapshotId,
-      count: previewSignals.length,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+  await patchSnapshotPipeline(prisma, snapshotId, {
+    images: {
+      previewsTotal: 0,
+      previewsCompleted: 0,
+      previewReason: "waiting_for_curation",
+    },
+  });
 }

@@ -333,7 +333,6 @@ model SourceSnapshotSection {
   status      String    @default("pending")
   summary     String?
   items       Json?
-  segments    Json?
   error       String?
   startedAt   DateTime?
   completedAt DateTime?

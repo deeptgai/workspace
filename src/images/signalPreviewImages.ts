@@ -25,6 +25,42 @@ type GenerateAndStoreSignalPreviewOptions = {
   skipExisting?: boolean;
 };
 
+function hasPreviewImage(value: unknown) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) && typeof (value as { url?: unknown }).url === "string");
+}
+
+async function fillMissingSourcePreviewImage(
+  prisma: PrismaClient,
+  sourceSignalId: string | null,
+  previewImage: SnapshotSignalPreviewImage,
+) {
+  if (!sourceSignalId) {
+    return;
+  }
+
+  const sourceSignal = await prisma.sourceSignal.findUnique({
+    where: {
+      id: sourceSignalId,
+    },
+    select: {
+      previewImage: true,
+    },
+  });
+
+  if (hasPreviewImage(sourceSignal?.previewImage)) {
+    return;
+  }
+
+  await prisma.sourceSignal.update({
+    where: {
+      id: sourceSignalId,
+    },
+    data: {
+      previewImage: previewImage as Prisma.InputJsonValue,
+    },
+  });
+}
+
 export async function generateAndStoreSignalPreviewImage(
   prisma: PrismaClient,
   snapshotId: string,
@@ -89,6 +125,8 @@ export async function generateAndStoreSignalPreviewImage(
     : undefined;
 
   if (skipExisting && existingPreviewImage?.url) {
+    await fillMissingSourcePreviewImage(prisma, tableSignal.sourceSignalId, existingPreviewImage as SnapshotSignalPreviewImage);
+
     return {
       status: "skipped",
       snapshotId,
@@ -144,16 +182,7 @@ export async function generateAndStoreSignalPreviewImage(
     },
   });
 
-  if (tableSignal.sourceSignalId) {
-    await prisma.sourceSignal.update({
-      where: {
-        id: tableSignal.sourceSignalId,
-      },
-      data: {
-        previewImage: storedPreviewImage as Prisma.InputJsonValue,
-      },
-    });
-  }
+  await fillMissingSourcePreviewImage(prisma, tableSignal.sourceSignalId, storedPreviewImage);
 
   return {
     status: "generated",

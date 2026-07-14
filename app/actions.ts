@@ -74,6 +74,10 @@ function importSinceDateIso() {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
+function fullImportLimit() {
+  return envInt("UI_FULL_IMPORT_LIMIT", 20000);
+}
+
 function chatRef(chat: { username: string | null; externalId: string }) {
   return chat.username ? `@${chat.username}` : chat.externalId;
 }
@@ -234,7 +238,7 @@ export async function addTrackedSourceAction(formData: FormData) {
   await enqueueTelegramImportJob({
     chat,
     mode: "sync",
-    limit: envInt("UI_FULL_IMPORT_LIMIT", 500),
+    limit: fullImportLimit(),
     batchSize: envInt("TELEGRAM_IMPORT_BATCH_SIZE", 100),
     sleepMs: envInt("TELEGRAM_IMPORT_SLEEP_MS", 3000),
     sinceDateIso: importSinceDateIso(),
@@ -337,7 +341,7 @@ export async function fullImportAction(formData: FormData) {
   await enqueueTelegramImportJob({
     chat: chatRef(chat),
     mode: "sync",
-    limit: envInt("UI_FULL_IMPORT_LIMIT", 500),
+    limit: fullImportLimit(),
     batchSize: envInt("TELEGRAM_IMPORT_BATCH_SIZE", 100),
     sleepMs: envInt("TELEGRAM_IMPORT_SLEEP_MS", 3000),
     sinceDateIso: importSinceDateIso(),

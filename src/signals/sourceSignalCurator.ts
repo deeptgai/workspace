@@ -1,6 +1,7 @@
 import { Prisma, type PrismaClient, type SourceSignal, type SnapshotSignal as SnapshotSignalRow } from "@prisma/client";
 import type { AiConfig } from "../ai/config.js";
 import { createChatCompletion } from "../ai/chatClient.js";
+import { SOURCE_SIGNAL_CURATOR_SYSTEM_PROMPT } from "../prompts/sourceSignalCurator.js";
 
 type CuratorDecision =
   | {
@@ -38,6 +39,45 @@ type SnapshotSignalWithEvidence = SnapshotSignalRow & {
 };
 
 const candidateLimit = Number(process.env.SIGNAL_CURATOR_CANDIDATE_LIMIT || "8");
+
+const CURATOR_DECISION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    decision: {
+      type: "string",
+      enum: ["merge", "create", "reject"],
+    },
+    sourceSignalId: {
+      type: "string",
+      description: "Required when decision is merge; empty string otherwise.",
+    },
+    confidence: {
+      type: "number",
+      minimum: 0,
+      maximum: 1,
+    },
+    reason: {
+      type: "string",
+    },
+    title: {
+      type: "string",
+    },
+    summary: {
+      type: "string",
+    },
+    canonicalClaim: {
+      type: "string",
+    },
+    tags: {
+      type: "array",
+      items: {
+        type: "string",
+      },
+    },
+  },
+  required: ["decision", "sourceSignalId", "confidence", "reason", "title", "summary", "canonicalClaim", "tags"],
+};
 
 function extractJsonObject(content: string) {
   const trimmed = content.trim()
@@ -116,6 +156,14 @@ function jsonStringArray(value: unknown) {
 
 function uniqueTags(...tagGroups: Array<string[] | undefined>) {
   return [...new Set(tagGroups.flatMap((tags) => tags ?? []).map((tag) => tag.trim()).filter(Boolean))].slice(0, 10);
+}
+
+function jsonObjectValue(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function hasPreviewImage(value: unknown) {
+  return Boolean(jsonObjectValue(value) && typeof (value as { url?: unknown }).url === "string");
 }
 
 function signalText(signal: Pick<SnapshotSignalRow | SourceSignal, "title" | "summary" | "canonicalClaim" | "kind">) {
@@ -206,26 +254,7 @@ async function decideSignal(
   const content = await createChatCompletion(aiConfig, [
     {
       role: "system",
-      content: [
-        "Ты SignalCuratorAgent для живой карты канала.",
-        "Твоя задача — решить, является ли SnapshotSignal новым устойчивым сигналом, дублем/усилением существующего SourceSignal или шумом.",
-        "Решай строго по смыслу, не по похожести слов.",
-        "merge: если новый сигнал выражает тот же тезис/объект/боль/инсайт, даже если формулировка другая.",
-        "create: если тема похожая, но тезис, объект или практический смысл отличаются.",
-        "reject: если сигнал слишком общий, мусорный, не несет самостоятельной ценности или не подтвержден evidence.",
-        "Верни только JSON object без Markdown.",
-        "JSON schema:",
-        JSON.stringify({
-          decision: "merge | create | reject",
-          sourceSignalId: "required only for merge",
-          confidence: "0..1",
-          reason: "short Russian reason",
-          title: "optional improved title",
-          summary: "optional improved summary",
-          canonicalClaim: "optional for create",
-          tags: ["optional", "tags"],
-        }),
-      ].join("\n"),
+      content: SOURCE_SIGNAL_CURATOR_SYSTEM_PROMPT,
     },
     {
       role: "user",
@@ -254,7 +283,12 @@ async function decideSignal(
         })),
       }, null, 2),
     },
-  ], { json: true });
+  ], {
+    schema: {
+      name: "source_signal_curator_decision",
+      schema: CURATOR_DECISION_SCHEMA,
+    },
+  });
 
   const decision = parseDecision(content);
 
@@ -298,6 +332,16 @@ async function applyDecision(
   }
 
   return prisma.$transaction(async (tx) => {
+    const currentSnapshotSignal = await tx.snapshotSignal.findUnique({
+      where: {
+        id: snapshotSignal.id,
+      },
+      select: {
+        previewImage: true,
+      },
+    });
+    const snapshotPreviewImage = jsonObjectValue(currentSnapshotSignal?.previewImage) ??
+      jsonObjectValue(snapshotSignal.previewImage);
     const existingSourceSignal = decision.decision === "merge"
       ? await tx.sourceSignal.findUnique({
           where: {
@@ -307,6 +351,7 @@ async function applyDecision(
             firstEvidenceAt: true,
             lastEvidenceAt: true,
             tags: true,
+            previewImage: true,
           },
         })
       : null;
@@ -320,7 +365,9 @@ async function applyDecision(
             summary: decision.summary || snapshotSignal.summary,
             tags: uniqueTags(jsonStringArray(existingSourceSignal?.tags), jsonStringArray(snapshotSignal.tags), decision.tags) satisfies Prisma.InputJsonValue,
             confidence: decision.confidence,
-            previewImage: snapshotSignal.previewImage ?? undefined,
+            previewImage: !hasPreviewImage(existingSourceSignal?.previewImage) && snapshotPreviewImage
+              ? snapshotPreviewImage as Prisma.InputJsonValue
+              : undefined,
             firstEvidenceAt: minDate(existingSourceSignal?.firstEvidenceAt, snapshotSignal.sortAt),
             lastEvidenceAt: maxDate(existingSourceSignal?.lastEvidenceAt, snapshotSignal.sortAt),
           },
@@ -335,7 +382,7 @@ async function applyDecision(
             fingerprint: snapshotSignal.fingerprint || snapshotSignal.id,
             tags: uniqueTags(jsonStringArray(snapshotSignal.tags), decision.tags) satisfies Prisma.InputJsonValue,
             confidence: decision.confidence,
-            previewImage: snapshotSignal.previewImage ?? Prisma.JsonNull,
+            previewImage: snapshotPreviewImage ? snapshotPreviewImage as Prisma.InputJsonValue : Prisma.JsonNull,
             firstEvidenceAt: snapshotSignal.sortAt,
             lastEvidenceAt: snapshotSignal.sortAt,
             metadata: {

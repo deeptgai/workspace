@@ -18,6 +18,11 @@ type ChatCompletionResponse = {
 
 type ChatCompletionOptions = {
   json?: boolean;
+  schema?: {
+    name: string;
+    schema: Record<string, unknown>;
+    strict?: boolean;
+  };
 };
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -67,6 +72,9 @@ export async function createChatCompletion(
 ): Promise<string> {
   const timeoutMs = Number(process.env.AI_REQUEST_TIMEOUT_MS || "300000");
   const maxAttempts = Number(process.env.AI_REQUEST_MAX_ATTEMPTS || "3");
+  const isOpenRouter = config.baseUrl.includes("openrouter.ai");
+  const useResponseHealing = isOpenRouter && process.env.OPENROUTER_RESPONSE_HEALING !== "false" && (options.json || options.schema);
+  const requireParameters = isOpenRouter && Boolean(options.schema) && process.env.OPENROUTER_REQUIRE_PARAMETERS !== "false";
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -88,7 +96,36 @@ export async function createChatCompletion(
           model: config.model,
           messages,
           temperature: 0.2,
-          ...(options.json ? { response_format: { type: "json_object" } } : {}),
+          ...(options.schema
+            ? {
+                response_format: {
+                  type: "json_schema",
+                  json_schema: {
+                    name: options.schema.name,
+                    strict: options.schema.strict ?? true,
+                    schema: options.schema.schema,
+                  },
+                },
+              }
+            : options.json
+              ? { response_format: { type: "json_object" } }
+              : {}),
+          ...(requireParameters
+            ? {
+                provider: {
+                  require_parameters: true,
+                },
+              }
+            : {}),
+          ...(useResponseHealing
+            ? {
+                plugins: [
+                  {
+                    id: "response-healing",
+                  },
+                ],
+              }
+            : {}),
         }),
       }), timeoutMs, "Source completion request");
 

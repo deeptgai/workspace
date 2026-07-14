@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.cli.json",
+    "build": "tsc -p tsconfig.cli.json && node dist/scripts/copyPrompts.js",
     "dev": "tsx src/cli.ts",
     "dev:web": "next dev --webpack",
     "build:web": "next build",

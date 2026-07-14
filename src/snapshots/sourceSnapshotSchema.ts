@@ -57,21 +57,11 @@ export type ChannelSnapshotItem = {
   evidence?: SnapshotEvidenceRef[];
 };
 
-export type ChannelSnapshotPeopleSegment = {
-  id: string;
-  title: string;
-  summary: string;
-  sourceCandidateIds?: string[];
-  actorExternalIds: string[];
-  evidence?: SnapshotEvidenceRef[];
-};
-
 export type SnapshotSignalPerson = {
   actorExternalId?: string;
   username?: string;
   name?: string;
   avatarUrl?: string;
-  segments?: string[];
 };
 
 export type SnapshotGeneratedImage = {
@@ -132,7 +122,6 @@ export type ChannelSnapshotSection = {
   agent: string;
   summary: string;
   items: ChannelSnapshotItem[];
-  segments?: ChannelSnapshotPeopleSegment[];
 };
 
 export type ChannelSnapshotDocument = {

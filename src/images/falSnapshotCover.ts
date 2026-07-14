@@ -1,4 +1,5 @@
 import type { ChannelSnapshotDocument, SnapshotGeneratedImage } from "../snapshots/sourceSnapshotSchema.js";
+import { buildSnapshotCoverPrompt } from "../prompts/snapshotCoverImage.js";
 
 type FalSubmitResponse = {
   request_id?: string;
@@ -50,61 +51,6 @@ function falImageSize(options?: GenerateSnapshotCoverOptions) {
 
 function falOutputFormat(options?: GenerateSnapshotCoverOptions) {
   return options?.outputFormat?.trim() || process.env.FAL_SNAPSHOT_COVER_OUTPUT_FORMAT?.trim() || process.env.FAL_PREVIEW_OUTPUT_FORMAT?.trim() || "jpeg";
-}
-
-function stripMarkdown(value: string | undefined) {
-  return (value ?? "")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/[`*_>#-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function topSignals(snapshot: ChannelSnapshotDocument) {
-  return snapshot.signals
-    .filter((signal) => signal.kind !== "person")
-    .slice(0, 12)
-    .map((signal) => `${signal.kind}: ${stripMarkdown(signal.title)} — ${stripMarkdown(signal.summary).slice(0, 180)}`)
-    .join("\n");
-}
-
-function hasLiteralNatureWords(value: string) {
-  return /\b(baobab|baobabs|tree|trees|forest|savanna|jungle|bird|birds|wildlife|animal|animals|plant|plants|grass|landscape|frozen landscape|winter sky)\b/i.test(value);
-}
-
-function usableHeroPrompt(value: string) {
-  return hasLiteralNatureWords(value) ? "" : value;
-}
-
-export function buildSnapshotCoverPrompt(snapshot: ChannelSnapshotDocument) {
-  const heroPrompt = usableHeroPrompt(stripMarkdown(snapshot.heroTheme?.imagePrompt));
-  const rawTheme = snapshot.heroTheme
-    ? `Theme: ${snapshot.heroTheme.concept}. Mood: ${snapshot.heroTheme.mood}. Palette family: ${snapshot.heroTheme.palette}. Motif: ${snapshot.heroTheme.motif}.`
-    : "";
-  const theme = hasLiteralNatureWords(rawTheme)
-    ? "Theme: abstract strategic growth map for IT consulting, CRM, content operations, productivity, and client confidence. Use a premium studio composition with modular objects, light, paper, metal, glass, and subtle network structure."
-    : rawTheme;
-  const tags = [...new Set(snapshot.signals.flatMap((signal) => signal.tags).map(stripMarkdown).filter(Boolean))]
-    .slice(0, 18)
-    .join(", ");
-
-  return [
-    "Create one premium editorial hero cover image for a public mini-app snapshot of a Telegram channel.",
-    "The image is a wide website header background, not a small icon.",
-    "No text, no letters, no logos, no UI, no screenshots, no readable documents, no captions, no charts with labels, no portraits.",
-    "Use a concrete visual metaphor built from unmarked objects, space, light, material texture, and composition.",
-    "It should feel specific to this channel snapshot, analytical, useful, modern, and sellable.",
-    "Leave calm negative space on the left side for white overlaid title text.",
-    "Do not illustrate the channel title literally. Treat the title as metadata only, not as an image subject.",
-    "No birds, wildlife, animals, trees, plants, grass, forests, savanna, landscapes, or decorative nature scenes.",
-    "Prefer business, IT, consulting, product, CRM, content, productivity, and strategic-growth visual metaphors when those topics appear in the signals.",
-    "Visual subject: abstract business and technology signal map, client confidence, multi-directional growth, operational clarity.",
-    theme,
-    heroPrompt ? `Existing visual direction: ${heroPrompt}.` : "",
-    tags ? `Important topic tags: ${tags}.` : "",
-    "Important signals:",
-    topSignals(snapshot),
-  ].filter(Boolean).join("\n");
 }
 
 async function parseFalJson<T>(response: Response, label: string): Promise<T> {

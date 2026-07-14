@@ -12,6 +12,7 @@ import { formatContentBatch, formatContentItemsByExternalIds } from "../formatti
 import { generateCommunitySnapshot, generateCommunitySnapshotSection } from "../snapshots/communitySnapshot.js";
 import { generateAndStoreSnapshotCoverImage } from "../images/snapshotCoverImages.js";
 import { generateAndStoreSignalPreviewImage } from "../images/signalPreviewImages.js";
+import { PREVIEW_IMAGE_SIGNAL_KINDS } from "../images/falSignalPreview.js";
 import { curateSnapshotSignalsIntoSource } from "../signals/sourceSignalCurator.js";
 import { markSnapshotAnalysisComplete } from "../snapshots/analysisState.js";
 import { patchSnapshotPipeline } from "../snapshots/pipeline.js";
@@ -124,6 +125,51 @@ function parseSinceDate(value: string | undefined) {
 
 function shouldUseScannedLimit(data: TelegramImportJobData) {
   return Boolean(data.untilDateIso);
+}
+
+async function enqueueCuratedSignalPreviewJobs(
+  snapshotId: string,
+  signalPreviewImageQueue: Queue<SignalPreviewImageJobData, unknown, string>,
+) {
+  const signals = await prisma.snapshotSignal.findMany({
+    where: {
+      snapshotId,
+      sourceSignalId: {
+        not: null,
+      },
+      status: {
+        in: ["promoted", "merged"],
+      },
+      kind: {
+        in: [...PREVIEW_IMAGE_SIGNAL_KINDS],
+      },
+      previewImage: {
+        equals: Prisma.JsonNull,
+      },
+    },
+    select: {
+      externalSignalId: true,
+    },
+  });
+
+  const jobs = await Promise.all(signals.map((signal) => signalPreviewImageQueue.add("preview", {
+    snapshotId,
+    signalId: signal.externalSignalId,
+  }, {
+    jobId: `signal-preview-image--${snapshotId}--${signal.externalSignalId}`.replace(/[^a-z0-9_-]+/giu, "-"),
+  })));
+
+  await patchSnapshotPipeline(prisma, snapshotId, {
+    images: {
+      status: signals.length ? "queued" : "completed",
+      previewsTotal: signals.length,
+      previewsCompleted: 0,
+      previewJobIds: jobs.map((job) => String(job.id)),
+      previewReason: "after_curation",
+    },
+  });
+
+  return jobs.length;
 }
 
 export function startWorkers() {
@@ -690,6 +736,29 @@ export function startWorkers() {
             committedAt: new Date().toISOString(),
           },
         });
+      }
+
+      if (pending === 0) {
+        try {
+          const previewJobs = await enqueueCuratedSignalPreviewJobs(job.data.snapshotId, signalPreviewImageQueue);
+          console.log(`[${SOURCE_SIGNAL_CURATION_QUEUE}] enqueued ${SIGNAL_PREVIEW_IMAGE_QUEUE} jobs after curation`, {
+            snapshotId: job.data.snapshotId,
+            previewJobs,
+          });
+        } catch (error) {
+          await patchSnapshotPipeline(prisma, job.data.snapshotId, {
+            images: {
+              status: "failed",
+              previewsError: error instanceof Error ? error.message : String(error),
+            },
+            errors: [{
+              stage: "signal-preview-images",
+              message: error instanceof Error ? error.message : String(error),
+              at: new Date().toISOString(),
+            }],
+          });
+          throw error;
+        }
       }
 
       console.log(`[${SOURCE_SIGNAL_CURATION_QUEUE}] job ${job.id} complete`, result);

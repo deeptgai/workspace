@@ -100,22 +100,16 @@ https://t.me/deep_signals_bot/signals_web?startapp=anatoly-tolkit
 
 The `Люди` and `Инструменты` sections are paid via Telegram Stars. The Mini App creates a Stars invoice from the Next API, opens it with `WebApp.openInvoice`, and the bot webhook marks access as paid after `successful_payment`.
 
-For browser login with Telegram, link the domain with the bot in BotFather:
-
-```text
-/setdomain -> @deep_signals_bot -> local.tgdeep.xyz
-```
-
-Then browser users can open `/auth/telegram?returnTo=/s/anatoly-tolkit`, log in with the Telegram Login Widget, and receive the same signed session cookie used by the Mini App.
-
-If BotFather shows Web Login Client ID and Client Secret, add them to `.env` to use the modern OIDC redirect flow instead of the legacy iframe widget:
+For browser login with Telegram, configure Telegram OIDC credentials for the public domain:
 
 ```text
 TELEGRAM_LOGIN_CLIENT_ID=
 TELEGRAM_LOGIN_CLIENT_SECRET=
 ```
 
-The login page must be opened through the linked domain, not `localhost`:
+Then browser users can open `/auth/telegram?returnTo=/s/anatoly-tolkit`, complete the Telegram OIDC redirect, and receive the same signed session cookie used by the Mini App.
+
+For local development, open the login page through a public configured domain instead of `localhost`:
 
 ```text
 https://local.tgdeep.xyz/auth/telegram?returnTo=/s/anatoly-tolkit
@@ -197,8 +191,8 @@ npm run dev -- import @channel_username --mode backfill
 Mode behavior:
 
 - `sync` imports new messages first, then continues historical backfill.
-- `new` imports messages newer than the saved `newestImportedMessageId`.
-- `backfill` imports older history before the saved `oldestImportedMessageId`.
+- `new` imports messages newer than the saved `newestExternalId`.
+- `backfill` imports older history before the saved `oldestExternalId`.
 
 Batch options:
 

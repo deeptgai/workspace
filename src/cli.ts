@@ -1182,7 +1182,7 @@ program
   .argument("<sectionId>", "Section id: ideas, pains, risks, hypotheses, insights, trends, events, materials, people, tools, places")
   .action(async (snapshotId: string, sectionId: string) => {
     try {
-      const { SIGNAL_AGENTS } = await import("./snapshots/communitySnapshot.js");
+      const { SIGNAL_AGENTS } = await import("./prompts/snapshotAgents.js");
       const definition = SIGNAL_AGENTS.find((section) => section.id === sectionId);
 
       if (!definition) {
