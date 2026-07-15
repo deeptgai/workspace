@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { DatabaseZap, FileDown, FilePlus2, RefreshCw } from "lucide-react";
+import { FileDown, FilePlus2 } from "lucide-react";
 import { sourcePaidSignalKinds } from "../../../src/sources/paidSignalKinds";
-import { checkUpdatesAction, createSnapshotAction, fullImportAction, retrySnapshotSectionAction } from "../../actions";
+import { createSnapshotAction, retrySnapshotSectionAction } from "../../actions";
 import { AppShell, ItemsBadge, SnapshotsBadge, Stat, TypeBadge } from "../../components";
 import { compactText, formatDate, formatDateTime, formatNumber, getSourceDetail } from "../../data";
 import { sourceSlug } from "../../sourceSlug";
@@ -37,10 +37,10 @@ export default async function SourcePage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ snapshot?: string; import?: string; paid?: string }>;
+  searchParams: Promise<{ snapshot?: string; paid?: string }>;
 }) {
   const { id } = await params;
-  const { snapshot, import: importStatus, paid } = await searchParams;
+  const { snapshot, paid } = await searchParams;
   const detail = await getSourceDetail(id);
 
   if (!detail) {
@@ -72,20 +72,6 @@ export default async function SourcePage({
             <FileDown size={15} />
             Export MD
           </a>
-          <form action={checkUpdatesAction}>
-            <input type="hidden" name="sourceId" value={chat.id} />
-            <button className="button" type="submit">
-              <RefreshCw size={15} />
-              Check updates
-            </button>
-          </form>
-          <form action={fullImportAction}>
-            <input type="hidden" name="sourceId" value={chat.id} />
-            <button className="button danger" type="submit">
-              <DatabaseZap size={15} />
-              Full Import
-            </button>
-          </form>
         </div>
       </div>
 
@@ -99,12 +85,6 @@ export default async function SourcePage({
 
       {snapshot === "queued" ? (
         <div className="notice">Snapshot job queued. It will appear below while the worker generates it.</div>
-      ) : null}
-      {importStatus === "updates_queued" ? (
-        <div className="notice">Update import queued. New posts will be imported first, then new comments.</div>
-      ) : null}
-      {importStatus === "full_queued" ? (
-        <div className="notice">Full import queued. Existing items and snapshots were cleared for this source.</div>
       ) : null}
       {paid === "updated" ? (
         <div className="notice">Paid section settings saved.</div>

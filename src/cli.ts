@@ -53,6 +53,10 @@ function sinceDateIsoFromDays(days: number): string | undefined {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
+function sourceChatRef(source: { username: string | null; externalId: string }) {
+  return source.username ? `@${source.username}` : source.externalId;
+}
+
 function parseDateOption(value: string, name: string): Date {
   const date = new Date(value);
 
@@ -381,6 +385,69 @@ program
       chat,
       mode,
     }]);
+  });
+
+program
+  .command("source:update")
+  .description("Enqueue update import for an existing source: new posts first, then new comments")
+  .argument("<source>", "Stored source id, exact title, username, or @username")
+  .option("-l, --limit <number>", "Maximum number of new posts to import", "200")
+  .option("-b, --batch-size <number>", "Messages per Telegram request", getDefaultBatchSize())
+  .option("-s, --sleep-ms <number>", "Pause between batches in milliseconds", getDefaultSleepMs())
+  .option("--since-days <number>", "Only scan messages from the last N days. Use 0 to disable.", getDefaultSinceDays())
+  .option("--no-comments", "Skip importing new comments after new posts")
+  .option("--comments-post-limit <number>", "Maximum posts to scan for new comments", "80")
+  .option("--comments-per-post <number>", "Maximum comments per post", "100")
+  .action(async (
+    source: string,
+    options: {
+      limit: string;
+      batchSize: string;
+      sleepMs: string;
+      sinceDays: string;
+      comments: boolean;
+      commentsPostLimit: string;
+      commentsPerPost: string;
+    },
+  ) => {
+    try {
+      const storedSource = await findStoredSource(prisma, source);
+
+      if (!storedSource) {
+        throw new Error(`Source not found in database: ${source}`);
+      }
+
+      const chat = sourceChatRef(storedSource);
+      const { enqueueTelegramImportJob } = await import("./queue/enqueue.js");
+      const job = await enqueueTelegramImportJob({
+        chat,
+        mode: "new",
+        limit: parsePositiveInteger(options.limit, "--limit"),
+        batchSize: parsePositiveInteger(options.batchSize, "--batch-size"),
+        sleepMs: parseNonNegativeInteger(options.sleepMs, "--sleep-ms"),
+        sinceDateIso: sinceDateIsoFromDays(parseNonNegativeInteger(options.sinceDays, "--since-days")),
+        importCommentsAfter: options.comments
+          ? {
+              mode: "new",
+              postLimit: parsePositiveInteger(options.commentsPostLimit, "--comments-post-limit"),
+              commentsPerPost: parsePositiveInteger(options.commentsPerPost, "--comments-per-post"),
+            }
+          : undefined,
+      });
+
+      console.log("");
+      console.log("Source update job enqueued.");
+      console.table([{
+        queue: "telegram-import",
+        jobId: job.id,
+        sourceId: storedSource.id,
+        chat,
+        mode: "new",
+        comments: options.comments ? "new" : "disabled",
+      }]);
+    } finally {
+      await prisma.$disconnect();
+    }
   });
 
 program
