@@ -48,7 +48,18 @@ function extractJsonObject(content: string) {
 }
 
 function compact(value: string | undefined, maxLength: number) {
-  return (value ?? "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+  const text = (value ?? "").replace(/\s+/g, " ").trim();
+
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  const slice = text.slice(0, maxLength).trim();
+  const lastSpace = slice.lastIndexOf(" ");
+
+  return lastSpace >= Math.floor(maxLength * 0.75)
+    ? slice.slice(0, lastSpace)
+    : slice;
 }
 
 function normalizeOutput(output: EnrichmentAgentOutput): EnrichmentParseResult {
