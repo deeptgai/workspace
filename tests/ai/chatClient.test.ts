@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { createChatCompletion } from "../../src/ai/chatClient.ts";
+import { createChatCompletion, createChatCompletionWithTools } from "../../src/ai/chatClient.ts";
 
 type FetchCall = {
   url: string;
@@ -232,6 +232,84 @@ describe("createChatCompletion", () => {
         /Provider returned error/,
       );
       assert.equal(fetchMock.calls.length, 1);
+    } finally {
+      fetchMock.restore();
+    }
+  });
+});
+
+describe("createChatCompletionWithTools", () => {
+  const envBackup: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of [
+      "AI_REQUEST_MAX_ATTEMPTS",
+      "AI_REQUEST_TIMEOUT_MS",
+      "OPENROUTER_RESPONSE_HEALING",
+    ]) {
+      envBackup[key] = process.env[key];
+    }
+
+    process.env.AI_REQUEST_MAX_ATTEMPTS = "1";
+    process.env.AI_REQUEST_TIMEOUT_MS = "10000";
+    delete process.env.OPENROUTER_RESPONSE_HEALING;
+  });
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(envBackup)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  });
+
+  it("falls back from schema provider errors while preserving tools", async () => {
+    const tools = [{
+      type: "function" as const,
+      function: {
+        name: "search_pages",
+        description: "Search Wikipedia",
+        parameters: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+            },
+          },
+          required: ["query"],
+          additionalProperties: false,
+        },
+      },
+    }];
+    const fetchMock = mockFetch([
+      errorResponse(400, "Provider returned error"),
+      successResponse("{\"value\":\"tool-fallback\"}"),
+    ]);
+
+    try {
+      const content = await createChatCompletionWithTools(config, messages, {
+        tools,
+        onToolCall: async () => "unused",
+        schema,
+      });
+
+      assert.equal(content, "{\"value\":\"tool-fallback\"}");
+      assert.equal(fetchMock.calls.length, 2);
+      assert.deepEqual(fetchMock.calls[0]?.body.response_format, {
+        type: "json_schema",
+        json_schema: {
+          name: "test_schema",
+          strict: true,
+          schema: schema.schema,
+        },
+      });
+      assert.deepEqual(fetchMock.calls[0]?.body.tools, tools);
+      assert.deepEqual(fetchMock.calls[1]?.body.response_format, {
+        type: "json_object",
+      });
+      assert.deepEqual(fetchMock.calls[1]?.body.tools, tools);
     } finally {
       fetchMock.restore();
     }

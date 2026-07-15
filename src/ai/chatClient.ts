@@ -254,7 +254,7 @@ export async function createChatCompletion(
 export async function createChatCompletionWithTools(
   config: AiConfig,
   messages: ChatMessage[],
-  options: Omit<ChatCompletionOptions, "allowJsonFallback"> & {
+  options: ChatCompletionOptions & {
     tools: ChatTool[];
     onToolCall: ChatToolHandler;
   },
@@ -263,116 +263,140 @@ export async function createChatCompletionWithTools(
   const maxAttempts = Number(process.env.AI_REQUEST_MAX_ATTEMPTS || "3");
   const maxToolRounds = options.maxToolRounds ?? 4;
   const conversation = [...messages];
+  const requestVariants = options.schema && options.allowJsonFallback !== false
+    ? [
+        options,
+        { ...options, schema: undefined, json: true } satisfies ChatCompletionOptions & { tools: ChatTool[]; onToolCall: ChatToolHandler },
+        { ...options, schema: undefined, json: false } satisfies ChatCompletionOptions & { tools: ChatTool[]; onToolCall: ChatToolHandler },
+      ]
+    : [options];
   let lastError: unknown;
 
   for (let round = 0; round <= maxToolRounds; round += 1) {
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      try {
-        const response = await withTimeout(fetch(`${config.baseUrl}/chat/completions`, {
-          method: "POST",
-          signal: AbortSignal.timeout(timeoutMs),
-          headers: {
-            "Authorization": `Bearer ${config.apiKey}`,
-            "Content-Type": "application/json",
-            ...(process.env.OPENROUTER_HTTP_REFERER
-              ? { "HTTP-Referer": process.env.OPENROUTER_HTTP_REFERER }
-              : {}),
-            ...(process.env.OPENROUTER_APP_TITLE
-              ? { "X-Title": process.env.OPENROUTER_APP_TITLE }
-              : {}),
-          },
-          body: JSON.stringify({
-            model: config.model,
-            messages: conversation,
-            temperature: 0.2,
-            tools: options.tools,
-            tool_choice: options.toolChoice ?? "auto",
-            ...(options.schema
-              ? {
-                  response_format: {
-                    type: "json_schema",
-                    json_schema: {
-                      name: options.schema.name,
-                      strict: options.schema.strict ?? true,
-                      schema: options.schema.schema,
-                    },
-                  },
-                }
-              : options.json
-                ? { response_format: { type: "json_object" } }
+    for (const [variantIndex, requestOptions] of requestVariants.entries()) {
+      lastError = undefined;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          const response = await withTimeout(fetch(`${config.baseUrl}/chat/completions`, {
+            method: "POST",
+            signal: AbortSignal.timeout(timeoutMs),
+            headers: {
+              "Authorization": `Bearer ${config.apiKey}`,
+              "Content-Type": "application/json",
+              ...(process.env.OPENROUTER_HTTP_REFERER
+                ? { "HTTP-Referer": process.env.OPENROUTER_HTTP_REFERER }
                 : {}),
-            ...(config.baseUrl.includes("openrouter.ai") && process.env.OPENROUTER_RESPONSE_HEALING !== "false" && (options.json || options.schema)
-              ? {
-                  plugins: [
-                    {
-                      id: "response-healing",
+              ...(process.env.OPENROUTER_APP_TITLE
+                ? { "X-Title": process.env.OPENROUTER_APP_TITLE }
+                : {}),
+            },
+            body: JSON.stringify({
+              model: config.model,
+              messages: conversation,
+              temperature: 0.2,
+              tools: requestOptions.tools,
+              tool_choice: requestOptions.toolChoice ?? "auto",
+              ...(requestOptions.schema
+                ? {
+                    response_format: {
+                      type: "json_schema",
+                      json_schema: {
+                        name: requestOptions.schema.name,
+                        strict: requestOptions.schema.strict ?? true,
+                        schema: requestOptions.schema.schema,
+                      },
                     },
-                  ],
-                }
-              : {}),
-          }),
-        }), timeoutMs, "Tool completion request");
+                  }
+                : requestOptions.json
+                  ? { response_format: { type: "json_object" } }
+                  : {}),
+              ...(config.baseUrl.includes("openrouter.ai") && process.env.OPENROUTER_RESPONSE_HEALING !== "false" && (requestOptions.json || requestOptions.schema)
+                ? {
+                    plugins: [
+                      {
+                        id: "response-healing",
+                      },
+                    ],
+                  }
+                : {}),
+            }),
+          }), timeoutMs, "Tool completion request");
 
-        const json = await withTimeout(
-          response.json() as Promise<ChatCompletionResponse>,
-          timeoutMs,
-          "Tool completion response body",
-        );
-
-        if (!response.ok) {
-          throw new ChatCompletionHttpError(
-            json.error?.message || `Tool completion failed with HTTP ${response.status}`,
-            response.status,
+          const json = await withTimeout(
+            response.json() as Promise<ChatCompletionResponse>,
+            timeoutMs,
+            "Tool completion response body",
           );
-        }
 
-        const message = json.choices?.[0]?.message;
-
-        if (!message) {
-          throw new Error("Tool completion returned no message.");
-        }
-
-        const toolCalls = message.tool_calls ?? [];
-
-        if (!toolCalls.length) {
-          const content = message.content?.trim();
-
-          if (!content) {
-            throw new Error("Tool completion returned empty content.");
+          if (!response.ok) {
+            throw new ChatCompletionHttpError(
+              json.error?.message || `Tool completion failed with HTTP ${response.status}`,
+              response.status,
+            );
           }
 
-          return content;
-        }
+          const message = json.choices?.[0]?.message;
 
-        if (round >= maxToolRounds) {
-          throw new Error(`Tool completion exceeded max tool rounds: ${maxToolRounds}.`);
-        }
+          if (!message) {
+            throw new Error("Tool completion returned no message.");
+          }
 
-        conversation.push({
-          role: "assistant",
-          content: message.content ?? null,
-          tool_calls: toolCalls,
-        });
+          const toolCalls = message.tool_calls ?? [];
 
-        for (const toolCall of toolCalls) {
-          const result = await options.onToolCall(toolCall);
+          if (!toolCalls.length) {
+            const content = message.content?.trim();
+
+            if (!content) {
+              throw new Error("Tool completion returned empty content.");
+            }
+
+            return content;
+          }
+
+          if (round >= maxToolRounds) {
+            throw new Error(`Tool completion exceeded max tool rounds: ${maxToolRounds}.`);
+          }
 
           conversation.push({
-            role: "tool",
-            tool_call_id: toolCall.id,
-            content: result,
+            role: "assistant",
+            content: message.content ?? null,
+            tool_calls: toolCalls,
           });
-        }
 
-        break;
-      } catch (error) {
-        lastError = error;
+          for (const toolCall of toolCalls) {
+            const result = await options.onToolCall(toolCall);
 
-        if (attempt >= maxAttempts || !isRetryableError(error)) {
+            conversation.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: result,
+            });
+          }
+
+          break;
+        } catch (error) {
+          lastError = error;
+
+          if (attempt < maxAttempts && isRetryableError(error)) {
+            await sleep(2000 * attempt);
+            continue;
+          }
+
+          const hasFallbackVariant = variantIndex < requestVariants.length - 1;
+
+          if (hasFallbackVariant && shouldFallbackFromSchemaError(error)) {
+            break;
+          }
+
           throw error;
         }
+      }
 
-        await sleep(2000 * attempt);
+      const hasFallbackVariant = variantIndex < requestVariants.length - 1;
+
+      if (!hasFallbackVariant || !shouldFallbackFromSchemaError(lastError)) {
+        break;
       }
     }
   }

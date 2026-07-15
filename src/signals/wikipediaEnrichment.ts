@@ -18,6 +18,7 @@ type EnrichmentAgentOutput = {
 };
 
 const ENRICHABLE_KINDS = new Set<SnapshotSignal["kind"]>([
+  "person",
   "material",
   "tool",
   "place",
@@ -25,57 +26,6 @@ const ENRICHABLE_KINDS = new Set<SnapshotSignal["kind"]>([
   "trend",
   "risk",
 ]);
-
-const ENRICHMENT_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    shouldEnrich: {
-      type: "boolean",
-    },
-    entityName: {
-      type: "string",
-    },
-    entityType: {
-      type: "string",
-      enum: ["person", "company", "product", "technology", "book", "place", "event", "concept", "other"],
-    },
-    summary: {
-      type: "string",
-    },
-    facts: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          claim: {
-            type: "string",
-          },
-          sourceTitle: {
-            type: "string",
-          },
-          sourceUrl: {
-            type: "string",
-          },
-          confidence: {
-            type: "number",
-            minimum: 0,
-            maximum: 1,
-          },
-        },
-        required: ["claim", "sourceTitle", "sourceUrl", "confidence"],
-      },
-    },
-    warnings: {
-      type: "array",
-      items: {
-        type: "string",
-      },
-    },
-  },
-  required: ["shouldEnrich", "entityName", "entityType", "summary", "facts", "warnings"],
-};
 
 function extractJsonObject(content: string) {
   const trimmed = content.trim()
@@ -159,6 +109,9 @@ export async function enrichSignalWithWikipedia(
           "Если Wikipedia не совпадает с сущностью сигнала или дает бесполезную справку, верни shouldEnrich=false.",
           "Факты должны быть основаны только на результатах MCP tools.",
           "Пиши summary и facts на русском. Не используй Markdown.",
+          "Верни только JSON object без Markdown и пояснений.",
+          "JSON поля: shouldEnrich:boolean, entityName:string, entityType:string, summary:string, facts:array, warnings:array.",
+          "Каждый fact: claim:string, sourceTitle:string, sourceUrl:string, confidence:number от 0 до 1.",
         ].join("\n"),
       },
       {
@@ -180,10 +133,7 @@ export async function enrichSignalWithWikipedia(
       tools: session.tools,
       onToolCall: session.callTool,
       maxToolRounds: Number(process.env.SNAPSHOT_WIKIPEDIA_MCP_MAX_TOOL_ROUNDS || "4"),
-      schema: {
-        name: "wikipedia_signal_enrichment",
-        schema: ENRICHMENT_SCHEMA,
-      },
+      json: true,
     });
 
     return normalizeOutput(JSON.parse(extractJsonObject(content)) as EnrichmentAgentOutput);
@@ -195,20 +145,40 @@ export async function enrichSignalWithWikipedia(
 export async function enrichSignalsWithWikipedia(
   aiConfig: AiConfig,
   signals: SnapshotSignal[],
-  onProgress?: (progress: { processed: number; total: number; enriched: number; signalId: string }) => void,
+  onProgress?: (progress: {
+    processed: number;
+    total: number;
+    enriched: number;
+    signalId: string;
+    status: "skipped" | "miss" | "enriched" | "error";
+    error?: string;
+  }) => void,
 ): Promise<SnapshotSignal[]> {
   if (process.env.SNAPSHOT_WIKIPEDIA_ENRICHMENT !== "true") {
     return signals;
   }
 
   const limit = Number(process.env.SNAPSHOT_WIKIPEDIA_ENRICHMENT_LIMIT || "24");
+  const total = Math.min(signals.filter((signal) => ENRICHABLE_KINDS.has(signal.kind)).length, limit);
   const nextSignals: SnapshotSignal[] = [];
   let processed = 0;
   let enriched = 0;
 
   for (const signal of signals) {
+    if (!ENRICHABLE_KINDS.has(signal.kind)) {
+      nextSignals.push(signal);
+      continue;
+    }
+
     if (processed >= limit) {
       nextSignals.push(signal);
+      onProgress?.({
+        processed,
+        total,
+        enriched,
+        signalId: signal.id,
+        status: "skipped",
+      });
       continue;
     }
 
@@ -223,19 +193,36 @@ export async function enrichSignalsWithWikipedia(
           ...signal,
           externalContext,
         });
+        onProgress?.({
+          processed,
+          total,
+          enriched,
+          signalId: signal.id,
+          status: "enriched",
+        });
       } else {
         nextSignals.push(signal);
+        onProgress?.({
+          processed,
+          total,
+          enriched,
+          signalId: signal.id,
+          status: "miss",
+        });
       }
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[wikipedia-enrichment] signal ${signal.id} (${signal.kind}) failed: ${message}`);
       nextSignals.push(signal);
+      onProgress?.({
+        processed,
+        total,
+        enriched,
+        signalId: signal.id,
+        status: "error",
+        error: message,
+      });
     }
-
-    onProgress?.({
-      processed,
-      total: Math.min(signals.length, limit),
-      enriched,
-      signalId: signal.id,
-    });
   }
 
   return nextSignals;
