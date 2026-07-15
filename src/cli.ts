@@ -57,6 +57,19 @@ function sourceChatRef(source: { username: string | null; externalId: string }) 
   return source.username ? `@${source.username}` : source.externalId;
 }
 
+function sourceUpdateSchedulerData(reason: "daily" | "manual") {
+  return {
+    reason,
+    limit: parsePositiveInteger(process.env.SOURCE_UPDATE_IMPORT_LIMIT || "200", "SOURCE_UPDATE_IMPORT_LIMIT"),
+    batchSize: parsePositiveInteger(getDefaultBatchSize(), "TELEGRAM_IMPORT_BATCH_SIZE"),
+    sleepMs: parseNonNegativeInteger(getDefaultSleepMs(), "TELEGRAM_IMPORT_SLEEP_MS"),
+    sinceDays: parseNonNegativeInteger(getDefaultSinceDays(), "TELEGRAM_IMPORT_SINCE_DAYS"),
+    comments: process.env.SOURCE_UPDATE_IMPORT_COMMENTS !== "false",
+    commentsPostLimit: parsePositiveInteger(process.env.SOURCE_UPDATE_COMMENT_POST_LIMIT || "80", "SOURCE_UPDATE_COMMENT_POST_LIMIT"),
+    commentsPerPost: parsePositiveInteger(process.env.SOURCE_UPDATE_COMMENTS_PER_POST || "100", "SOURCE_UPDATE_COMMENTS_PER_POST"),
+  } as const;
+}
+
 function parseDateOption(value: string, name: string): Date {
   const date = new Date(value);
 
@@ -447,6 +460,61 @@ program
       }]);
     } finally {
       await prisma.$disconnect();
+    }
+  });
+
+program
+  .command("source:update:schedule")
+  .description("Upsert the daily BullMQ scheduler that enqueues updates for every source")
+  .option("--cron <pattern>", "Cron pattern for daily source updates", process.env.SOURCE_UPDATE_DAILY_CRON || "0 3 * * *")
+  .option("--tz <timezone>", "Timezone for the cron pattern", process.env.SOURCE_UPDATE_DAILY_TZ || "Europe/Berlin")
+  .action(async (options: { cron: string; tz: string }) => {
+    const { createQueues } = await import("./queue/queues.js");
+    const queues = createQueues();
+
+    try {
+      const job = await queues.sourceUpdateSchedulerQueue.upsertJobScheduler("daily-source-updates", {
+        pattern: options.cron,
+        tz: options.tz,
+      }, {
+        name: "daily",
+        data: sourceUpdateSchedulerData("daily"),
+      });
+
+      console.log("");
+      console.log("Daily source update scheduler upserted.");
+      console.table([{
+        queue: "source-update-scheduler",
+        schedulerId: "daily-source-updates",
+        nextJobId: job.id,
+        cron: options.cron,
+        tz: options.tz,
+      }]);
+    } finally {
+      await queues.sourceUpdateSchedulerQueue.close();
+    }
+  });
+
+program
+  .command("source:update:run")
+  .description("Enqueue one scheduler run that updates every stored source")
+  .action(async () => {
+    const { createQueues } = await import("./queue/queues.js");
+    const queues = createQueues();
+
+    try {
+      const job = await queues.sourceUpdateSchedulerQueue.add("manual", sourceUpdateSchedulerData("manual"), {
+        jobId: `manual-source-updates--${Date.now()}`,
+      });
+
+      console.log("");
+      console.log("Manual source update scheduler job enqueued.");
+      console.table([{
+        queue: "source-update-scheduler",
+        jobId: job.id,
+      }]);
+    } finally {
+      await queues.sourceUpdateSchedulerQueue.close();
     }
   });
 
@@ -974,8 +1042,9 @@ program
     const queues = createQueues();
 
     try {
-      const [importCounts, commentImportCounts, embeddingCounts, formattingCounts, snapshotCounts, snapshotSectionCounts, curationCounts, coverImageCounts, previewImageCounts] = await Promise.all([
+      const [importCounts, sourceUpdateSchedulerCounts, commentImportCounts, embeddingCounts, formattingCounts, snapshotCounts, snapshotSectionCounts, curationCounts, coverImageCounts, previewImageCounts] = await Promise.all([
         queues.telegramImportQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
+        queues.sourceUpdateSchedulerQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
         queues.commentImportQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
         queues.contentEmbeddingQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
         queues.contentFormattingQueue.getJobCounts("waiting", "active", "completed", "failed", "delayed"),
@@ -990,6 +1059,10 @@ program
         {
           queue: "telegram-import",
           ...importCounts,
+        },
+        {
+          queue: "source-update-scheduler",
+          ...sourceUpdateSchedulerCounts,
         },
         {
           queue: "message-embedding",
@@ -1027,6 +1100,7 @@ program
 
       const activeJobs = [
         ...await queues.telegramImportQueue.getActive(),
+        ...await queues.sourceUpdateSchedulerQueue.getActive(),
         ...await queues.commentImportQueue.getActive(),
         ...await queues.contentEmbeddingQueue.getActive(),
         ...await queues.contentFormattingQueue.getActive(),
@@ -1049,6 +1123,7 @@ program
       }
     } finally {
       await queues.telegramImportQueue.close();
+      await queues.sourceUpdateSchedulerQueue.close();
       await queues.commentImportQueue.close();
       await queues.contentEmbeddingQueue.close();
       await queues.contentFormattingQueue.close();

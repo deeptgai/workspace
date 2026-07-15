@@ -19,8 +19,8 @@ import { patchSnapshotPipeline } from "../snapshots/pipeline.js";
 import { connectTelegramClient } from "../telegram/client.js";
 import { resolveDialogEntity } from "../telegram/dialogs.js";
 import { createRedisConnectionOptions } from "./connection.js";
-import { SOURCE_SNAPSHOT_QUEUE, SOURCE_SNAPSHOT_SECTION_QUEUE, COMMENT_IMPORT_QUEUE, MESSAGE_EMBEDDING_QUEUE, TELEGRAM_IMPORT_QUEUE, SIGNAL_PREVIEW_IMAGE_QUEUE, SNAPSHOT_COVER_IMAGE_QUEUE, CONTENT_FORMATTING_QUEUE, SOURCE_SIGNAL_CURATION_QUEUE } from "./names.js";
-import type { SourceSnapshotJobData, SourceSnapshotSectionJobData, CommentImportJobData, ContentEmbeddingJobData, TelegramImportJobData, SignalPreviewImageJobData, SnapshotCoverImageJobData, ContentFormattingJobData, SourceSignalCurationJobData } from "./types.js";
+import { SOURCE_SNAPSHOT_QUEUE, SOURCE_SNAPSHOT_SECTION_QUEUE, COMMENT_IMPORT_QUEUE, MESSAGE_EMBEDDING_QUEUE, TELEGRAM_IMPORT_QUEUE, SIGNAL_PREVIEW_IMAGE_QUEUE, SNAPSHOT_COVER_IMAGE_QUEUE, CONTENT_FORMATTING_QUEUE, SOURCE_SIGNAL_CURATION_QUEUE, SOURCE_UPDATE_SCHEDULER_QUEUE } from "./names.js";
+import type { SourceSnapshotJobData, SourceSnapshotSectionJobData, CommentImportJobData, ContentEmbeddingJobData, TelegramImportJobData, SignalPreviewImageJobData, SnapshotCoverImageJobData, ContentFormattingJobData, SourceSignalCurationJobData, SourceUpdateSchedulerJobData } from "./types.js";
 
 function sectionJobId(snapshotId: string, sectionId: string) {
   return `snapshot-section--${snapshotId}--${sectionId}`.replace(/[^a-z0-9_-]+/giu, "-");
@@ -38,8 +38,140 @@ function envInt(name: string, fallback: number) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function envNonNegativeInt(name: string, fallback: number) {
+  const value = process.env[name];
+
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function envBool(name: string, fallback: boolean) {
+  const value = process.env[name]?.trim().toLowerCase();
+
+  if (!value) {
+    return fallback;
+  }
+
+  return ["1", "true", "yes", "on"].includes(value)
+    ? true
+    : ["0", "false", "no", "off"].includes(value)
+      ? false
+      : fallback;
+}
+
 function slug(value: string) {
   return value.trim().replace(/^@/, "").toLowerCase().replace(/[^a-z0-9а-яё_-]+/giu, "-");
+}
+
+function sinceDateIsoFromDays(days: number): string | undefined {
+  if (days <= 0) {
+    return undefined;
+  }
+
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function sourceChatRef(source: { username: string | null; externalId: string }) {
+  return source.username ? `@${source.username}` : source.externalId;
+}
+
+function sourceUpdateSchedulerData(reason: SourceUpdateSchedulerJobData["reason"]): SourceUpdateSchedulerJobData {
+  return {
+    reason,
+    limit: envInt("SOURCE_UPDATE_IMPORT_LIMIT", 200),
+    batchSize: envInt("TELEGRAM_IMPORT_BATCH_SIZE", 100),
+    sleepMs: envNonNegativeInt("TELEGRAM_IMPORT_SLEEP_MS", 3000),
+    sinceDays: envNonNegativeInt("TELEGRAM_IMPORT_SINCE_DAYS", 365),
+    comments: envBool("SOURCE_UPDATE_IMPORT_COMMENTS", true),
+    commentsPostLimit: envInt("SOURCE_UPDATE_COMMENT_POST_LIMIT", 80),
+    commentsPerPost: envInt("SOURCE_UPDATE_COMMENTS_PER_POST", 100),
+  };
+}
+
+async function enqueueSourceUpdateImports(
+  data: SourceUpdateSchedulerJobData,
+  telegramImportQueue: Queue<TelegramImportJobData, unknown, string>,
+) {
+  const sources = await prisma.source.findMany({
+    orderBy: {
+      createdAt: "asc",
+    },
+    select: {
+      id: true,
+      title: true,
+      username: true,
+      externalId: true,
+    },
+  });
+  const runId = data.reason === "daily"
+    ? new Date().toISOString().slice(0, 10)
+    : `manual-${Date.now()}`;
+  let enqueued = 0;
+
+  for (const source of sources) {
+    const chat = sourceChatRef(source);
+    const job = await telegramImportQueue.add("import", {
+      chat,
+      mode: "new",
+      limit: data.limit,
+      batchSize: data.batchSize,
+      sleepMs: data.sleepMs,
+      sinceDateIso: sinceDateIsoFromDays(data.sinceDays),
+      importCommentsAfter: data.comments
+        ? {
+            mode: "new",
+            postLimit: data.commentsPostLimit,
+            commentsPerPost: data.commentsPerPost,
+          }
+        : undefined,
+    }, {
+      jobId: `source-update--${runId}--${source.id}`.replace(/[^a-z0-9_-]+/giu, "-"),
+    });
+
+    enqueued += 1;
+    console.log(`[${SOURCE_UPDATE_SCHEDULER_QUEUE}] enqueued ${TELEGRAM_IMPORT_QUEUE} job ${job.id}`, {
+      sourceId: source.id,
+      title: source.title,
+      chat,
+      reason: data.reason,
+    });
+  }
+
+  return {
+    sources: sources.length,
+    enqueued,
+    comments: data.comments,
+  };
+}
+
+async function setupDailySourceUpdateScheduler(
+  sourceUpdateSchedulerQueue: Queue<SourceUpdateSchedulerJobData, unknown, string>,
+) {
+  if (!envBool("SOURCE_UPDATE_SCHEDULER_ENABLED", true)) {
+    console.log(`[${SOURCE_UPDATE_SCHEDULER_QUEUE}] daily scheduler disabled.`);
+    return;
+  }
+
+  const pattern = process.env.SOURCE_UPDATE_DAILY_CRON || "0 3 * * *";
+  const tz = process.env.SOURCE_UPDATE_DAILY_TZ || "Europe/Berlin";
+  const nextJob = await sourceUpdateSchedulerQueue.upsertJobScheduler("daily-source-updates", {
+    pattern,
+    tz,
+  }, {
+    name: "daily",
+    data: sourceUpdateSchedulerData("daily"),
+  });
+
+  console.log(`[${SOURCE_UPDATE_SCHEDULER_QUEUE}] daily scheduler upserted`, {
+    pattern,
+    tz,
+    nextJobId: nextJob.id,
+  });
 }
 
 function initialImportPhase(mode: TelegramImportJobData["mode"]): ImportBatchPhase {
@@ -187,6 +319,7 @@ export function startWorkers() {
   const snapshotCoverImageConnection = createRedisConnectionOptions();
   const signalPreviewImageConnection = createRedisConnectionOptions();
   const sourceSignalCurationConnection = createRedisConnectionOptions();
+  const sourceUpdateSchedulerConnection = createRedisConnectionOptions();
   const contentEmbeddingQueue = new Queue<ContentEmbeddingJobData, unknown, string>(MESSAGE_EMBEDDING_QUEUE, {
     connection: createRedisConnectionOptions(),
     defaultJobOptions: {
@@ -207,6 +340,14 @@ export function startWorkers() {
         type: "exponential",
         delay: 5000,
       },
+      removeOnComplete: 100,
+      removeOnFail: 100,
+    },
+  });
+  const sourceUpdateSchedulerQueue = new Queue<SourceUpdateSchedulerJobData, unknown, string>(SOURCE_UPDATE_SCHEDULER_QUEUE, {
+    connection: createRedisConnectionOptions(),
+    defaultJobOptions: {
+      attempts: 1,
       removeOnComplete: 100,
       removeOnFail: 100,
     },
@@ -391,6 +532,20 @@ export function startWorkers() {
     },
     {
       connection: importConnection,
+      concurrency: 1,
+    },
+  );
+
+  const sourceUpdateSchedulerWorker = new Worker<SourceUpdateSchedulerJobData>(
+    SOURCE_UPDATE_SCHEDULER_QUEUE,
+    async (job) => {
+      console.log(`[${SOURCE_UPDATE_SCHEDULER_QUEUE}] job ${job.id} started`, job.data);
+      const result = await enqueueSourceUpdateImports(job.data, telegramImportQueue);
+      console.log(`[${SOURCE_UPDATE_SCHEDULER_QUEUE}] job ${job.id} complete`, result);
+      return result;
+    },
+    {
+      connection: sourceUpdateSchedulerConnection,
       concurrency: 1,
     },
   );
@@ -815,6 +970,7 @@ export function startWorkers() {
 
   console.log("Worker concurrency:", {
     [TELEGRAM_IMPORT_QUEUE]: 1,
+    [SOURCE_UPDATE_SCHEDULER_QUEUE]: 1,
     [COMMENT_IMPORT_QUEUE]: 1,
     [MESSAGE_EMBEDDING_QUEUE]: 1,
     [CONTENT_FORMATTING_QUEUE]: contentFormattingConcurrency,
@@ -825,7 +981,11 @@ export function startWorkers() {
     [SIGNAL_PREVIEW_IMAGE_QUEUE]: signalPreviewImageConcurrency,
   });
 
-  for (const worker of [importWorker, commentImportWorker, embeddingWorker, contentFormattingWorker, snapshotWorker, snapshotSectionWorker, sourceSignalCurationWorker, snapshotCoverImageWorker, signalPreviewImageWorker]) {
+  void setupDailySourceUpdateScheduler(sourceUpdateSchedulerQueue).catch((error) => {
+    console.error(`[${SOURCE_UPDATE_SCHEDULER_QUEUE}] failed to upsert daily scheduler:`, error);
+  });
+
+  for (const worker of [importWorker, sourceUpdateSchedulerWorker, commentImportWorker, embeddingWorker, contentFormattingWorker, snapshotWorker, snapshotSectionWorker, sourceSignalCurationWorker, snapshotCoverImageWorker, signalPreviewImageWorker]) {
     worker.on("error", (error) => {
       console.error(`[${worker.name}] worker error:`, error);
     });
@@ -839,7 +999,7 @@ export function startWorkers() {
     });
   }
 
-  for (const queue of [contentEmbeddingQueue, contentFormattingQueue, commentImportQueue, telegramImportQueue, snapshotSectionQueue, sourceSignalCurationQueue, snapshotCoverImageQueue, signalPreviewImageQueue]) {
+  for (const queue of [contentEmbeddingQueue, contentFormattingQueue, sourceUpdateSchedulerQueue, commentImportQueue, telegramImportQueue, snapshotSectionQueue, sourceSignalCurationQueue, snapshotCoverImageQueue, signalPreviewImageQueue]) {
     queue.on("error", (error) => {
       console.error(`[${queue.name}] queue error:`, error);
     });
@@ -847,6 +1007,7 @@ export function startWorkers() {
 
   return {
     importWorker,
+    sourceUpdateSchedulerWorker,
     commentImportWorker,
     embeddingWorker,
     contentFormattingWorker,
@@ -857,6 +1018,7 @@ export function startWorkers() {
     signalPreviewImageWorker,
     contentEmbeddingQueue,
     contentFormattingQueue,
+    sourceUpdateSchedulerQueue,
     commentImportQueue,
     telegramImportQueue,
     snapshotSectionQueue,

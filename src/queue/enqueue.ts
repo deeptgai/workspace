@@ -16,6 +16,7 @@ async function closeQueues(queues: ReturnType<typeof createQueues>) {
     queues.commentImportQueue.close(),
     queues.contentEmbeddingQueue.close(),
     queues.contentFormattingQueue.close(),
+    queues.sourceUpdateSchedulerQueue.close(),
     queues.sourceSnapshotQueue.close(),
     queues.sourceSnapshotSectionQueue.close(),
     queues.snapshotCoverImageQueue.close(),

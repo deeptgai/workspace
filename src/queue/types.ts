@@ -35,6 +35,17 @@ export type ContentFormattingJobData = {
   skipExisting?: boolean;
 };
 
+export type SourceUpdateSchedulerJobData = {
+  reason: "daily" | "manual";
+  limit: number;
+  batchSize: number;
+  sleepMs: number;
+  sinceDays: number;
+  comments: boolean;
+  commentsPostLimit: number;
+  commentsPerPost: number;
+};
+
 export type CommentImportJobData = {
   chat: string;
   mode: "sync" | "new";
