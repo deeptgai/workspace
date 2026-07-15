@@ -107,6 +107,20 @@ function parseAgentOutput(content: string): EnrichmentParseResult {
   return normalizeOutput(JSON.parse(extractJsonObject(content)) as EnrichmentAgentOutput);
 }
 
+function wikipediaEnrichmentLimit() {
+  const rawLimit = process.env.SNAPSHOT_WIKIPEDIA_ENRICHMENT_LIMIT?.trim();
+
+  if (!rawLimit) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const limit = Number(rawLimit);
+
+  return Number.isFinite(limit) && limit > 0
+    ? Math.floor(limit)
+    : Number.POSITIVE_INFINITY;
+}
+
 export async function enrichSignalWithWikipedia(
   aiConfig: AiConfig,
   signal: SnapshotSignal,
@@ -212,7 +226,7 @@ export async function enrichSignalsWithWikipedia(
     return signals;
   }
 
-  const limit = Number(process.env.SNAPSHOT_WIKIPEDIA_ENRICHMENT_LIMIT || "24");
+  const limit = wikipediaEnrichmentLimit();
   const total = Math.min(signals.filter((signal) => ENRICHABLE_KINDS.has(signal.kind)).length, limit);
   const nextSignals: SnapshotSignal[] = [];
   let processed = 0;
