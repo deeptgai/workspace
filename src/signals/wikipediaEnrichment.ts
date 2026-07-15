@@ -1,4 +1,5 @@
 import { createChatCompletionWithTools } from "../ai/chatClient.js";
+import type { ChatMessage } from "../ai/chatClient.js";
 import type { AiConfig } from "../ai/config.js";
 import { openMediaWikiMcpSession } from "../mcp/mediawikiMcpClient.js";
 import type { SnapshotExternalContext, SnapshotSignal } from "../snapshots/sourceSnapshotSchema.js";
@@ -16,6 +17,10 @@ type EnrichmentAgentOutput = {
   }>;
   warnings?: string[];
 };
+
+type EnrichmentParseResult =
+  | { shouldEnrich: false }
+  | { shouldEnrich: true; context: SnapshotExternalContext };
 
 const ENRICHABLE_KINDS = new Set<SnapshotSignal["kind"]>([
   "person",
@@ -46,9 +51,9 @@ function compact(value: string | undefined, maxLength: number) {
   return (value ?? "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
 
-function normalizeOutput(output: EnrichmentAgentOutput): SnapshotExternalContext | undefined {
+function normalizeOutput(output: EnrichmentAgentOutput): EnrichmentParseResult {
   if (!output.shouldEnrich) {
-    return undefined;
+    return { shouldEnrich: false };
   }
 
   const facts = (output.facts ?? []).flatMap((fact) => {
@@ -70,18 +75,25 @@ function normalizeOutput(output: EnrichmentAgentOutput): SnapshotExternalContext
   }).slice(0, 4);
 
   if (!facts.length) {
-    return undefined;
+    throw new Error("shouldEnrich=true requires at least one fact with claim, sourceTitle and en.wikipedia.org sourceUrl.");
   }
 
   return {
-    provider: "wikipedia",
-    entityName: compact(output.entityName, 120) || facts[0]?.sourceTitle || "Wikipedia",
-    entityType: output.entityType ?? "other",
-    canonicalUrl: facts[0]?.sourceUrl,
-    summary: compact(output.summary, 360) || undefined,
-    facts,
-    warnings: (output.warnings ?? []).map((warning) => compact(warning, 160)).filter(Boolean).slice(0, 3),
+    shouldEnrich: true,
+    context: {
+      provider: "wikipedia",
+      entityName: compact(output.entityName, 120) || facts[0]?.sourceTitle || "Wikipedia",
+      entityType: output.entityType ?? "other",
+      canonicalUrl: facts[0]?.sourceUrl,
+      summary: compact(output.summary, 360) || undefined,
+      facts,
+      warnings: (output.warnings ?? []).map((warning) => compact(warning, 160)).filter(Boolean).slice(0, 3),
+    },
   };
+}
+
+function parseAgentOutput(content: string): EnrichmentParseResult {
+  return normalizeOutput(JSON.parse(extractJsonObject(content)) as EnrichmentAgentOutput);
 }
 
 export async function enrichSignalWithWikipedia(
@@ -95,7 +107,7 @@ export async function enrichSignalWithWikipedia(
   const session = await openMediaWikiMcpSession();
 
   try {
-    const content = await createChatCompletionWithTools(aiConfig, [
+    const messages: ChatMessage[] = [
       {
         role: "system",
         content: [
@@ -129,14 +141,45 @@ export async function enrichSignalWithWikipedia(
           }, null, 2),
         ].join("\n"),
       },
-    ], {
-      tools: session.tools,
-      onToolCall: session.callTool,
-      maxToolRounds: Number(process.env.SNAPSHOT_WIKIPEDIA_MCP_MAX_TOOL_ROUNDS || "4"),
-      json: true,
-    });
+    ];
+    const maxValidationAttempts = Number(process.env.SNAPSHOT_WIKIPEDIA_VALIDATION_ATTEMPTS || "2");
+    let lastError: unknown;
 
-    return normalizeOutput(JSON.parse(extractJsonObject(content)) as EnrichmentAgentOutput);
+    for (let attempt = 1; attempt <= maxValidationAttempts; attempt += 1) {
+      const content = await createChatCompletionWithTools(aiConfig, messages, {
+        tools: session.tools,
+        onToolCall: session.callTool,
+        maxToolRounds: Number(process.env.SNAPSHOT_WIKIPEDIA_MCP_MAX_TOOL_ROUNDS || "4"),
+      });
+
+      try {
+        const parsed = parseAgentOutput(content);
+        return parsed.shouldEnrich ? parsed.context : undefined;
+      } catch (error) {
+        lastError = error;
+
+        if (attempt >= maxValidationAttempts) {
+          break;
+        }
+
+        messages.push({
+          role: "assistant",
+          content,
+        });
+        messages.push({
+          role: "user",
+          content: [
+            "Твой финальный ответ не прошел локальную проверку.",
+            `Ошибка: ${error instanceof Error ? error.message : String(error)}`,
+            "Продолжай как тот же агент. Если enrichment полезен, верни валидный JSON с фактами из Wikipedia tools.",
+            "Если надежных фактов нет, верни {\"shouldEnrich\":false,\"warnings\":[\"reason\"]}.",
+            "Верни только JSON object без Markdown.",
+          ].join("\n"),
+        });
+      }
+    }
+
+    throw lastError;
   } finally {
     await session.close();
   }

@@ -52,6 +52,21 @@ function successResponse(content: string) {
   });
 }
 
+function messageResponse(message: Record<string, unknown>) {
+  return new Response(JSON.stringify({
+    choices: [
+      {
+        message,
+      },
+    ],
+  }), {
+    status: 200,
+    headers: {
+      "content-type": "application/json",
+    },
+  });
+}
+
 function errorResponse(status: number, message: string) {
   return new Response(JSON.stringify({
     error: {
@@ -265,7 +280,7 @@ describe("createChatCompletionWithTools", () => {
     }
   });
 
-  it("falls back from schema provider errors while preserving tools", async () => {
+  it("runs a plain tool loop without response_format unless requested", async () => {
     const tools = [{
       type: "function" as const,
       function: {
@@ -284,31 +299,61 @@ describe("createChatCompletionWithTools", () => {
       },
     }];
     const fetchMock = mockFetch([
-      errorResponse(400, "Provider returned error"),
-      successResponse("{\"value\":\"tool-fallback\"}"),
+      messageResponse({
+        content: null,
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: {
+              name: "search_pages",
+              arguments: "{\"query\":\"Sequoia Capital\"}",
+            },
+          },
+        ],
+      }),
+      successResponse("{\"value\":\"tool-loop\"}"),
     ]);
+    const toolCalls: string[] = [];
 
     try {
       const content = await createChatCompletionWithTools(config, messages, {
         tools,
-        onToolCall: async () => "unused",
-        schema,
-      });
-
-      assert.equal(content, "{\"value\":\"tool-fallback\"}");
-      assert.equal(fetchMock.calls.length, 2);
-      assert.deepEqual(fetchMock.calls[0]?.body.response_format, {
-        type: "json_schema",
-        json_schema: {
-          name: "test_schema",
-          strict: true,
-          schema: schema.schema,
+        onToolCall: async (call) => {
+          toolCalls.push(call.function.name);
+          return "{\"pages\":[{\"title\":\"Sequoia Capital\"}]}";
         },
       });
+
+      assert.equal(content, "{\"value\":\"tool-loop\"}");
+      assert.equal(fetchMock.calls.length, 2);
+      assert.deepEqual(toolCalls, ["search_pages"]);
+      assert.equal(fetchMock.calls[0]?.body.response_format, undefined);
+      assert.equal(fetchMock.calls[0]?.body.plugins, undefined);
       assert.deepEqual(fetchMock.calls[0]?.body.tools, tools);
-      assert.deepEqual(fetchMock.calls[1]?.body.response_format, {
-        type: "json_object",
-      });
+      assert.equal(fetchMock.calls[1]?.body.response_format, undefined);
+      assert.deepEqual(fetchMock.calls[1]?.body.messages, [
+        ...messages,
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "call_1",
+              type: "function",
+              function: {
+                name: "search_pages",
+                arguments: "{\"query\":\"Sequoia Capital\"}",
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_1",
+          content: "{\"pages\":[{\"title\":\"Sequoia Capital\"}]}",
+        },
+      ]);
       assert.deepEqual(fetchMock.calls[1]?.body.tools, tools);
     } finally {
       fetchMock.restore();
