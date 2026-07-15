@@ -70,6 +70,21 @@ function sourceUpdateSchedulerData(reason: "daily" | "manual") {
   } as const;
 }
 
+async function closeCliQueues(queues: Awaited<ReturnType<typeof import("./queue/queues.js")["createQueues"]>>) {
+  await Promise.all([
+    queues.telegramImportQueue.close(),
+    queues.sourceUpdateSchedulerQueue.close(),
+    queues.commentImportQueue.close(),
+    queues.contentEmbeddingQueue.close(),
+    queues.contentFormattingQueue.close(),
+    queues.sourceSnapshotQueue.close(),
+    queues.sourceSnapshotSectionQueue.close(),
+    queues.sourceSignalCurationQueue.close(),
+    queues.snapshotCoverImageQueue.close(),
+    queues.signalPreviewImageQueue.close(),
+  ]);
+}
+
 function parseDateOption(value: string, name: string): Date {
   const date = new Date(value);
 
@@ -491,7 +506,7 @@ program
         tz: options.tz,
       }]);
     } finally {
-      await queues.sourceUpdateSchedulerQueue.close();
+      await closeCliQueues(queues);
     }
   });
 
@@ -514,7 +529,7 @@ program
         jobId: job.id,
       }]);
     } finally {
-      await queues.sourceUpdateSchedulerQueue.close();
+      await closeCliQueues(queues);
     }
   });
 
