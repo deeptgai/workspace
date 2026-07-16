@@ -15,7 +15,7 @@ import { generateAndStoreSignalPreviewImage } from "../images/signalPreviewImage
 import { PREVIEW_IMAGE_SIGNAL_KINDS } from "../images/falSignalPreview.js";
 import { curateSnapshotSignalsIntoSource } from "../signals/sourceSignalCurator.js";
 import { markSnapshotAnalysisComplete } from "../snapshots/analysisState.js";
-import { patchSnapshotPipeline } from "../snapshots/pipeline.js";
+import { initialSnapshotPipeline, patchSnapshotPipeline } from "../snapshots/pipeline.js";
 import { connectTelegramClient } from "../telegram/client.js";
 import { resolveDialogEntity } from "../telegram/dialogs.js";
 import { createRedisConnectionOptions } from "./connection.js";
@@ -90,6 +90,7 @@ function sourceUpdateSchedulerData(reason: SourceUpdateSchedulerJobData["reason"
     comments: envBool("SOURCE_UPDATE_IMPORT_COMMENTS", true),
     commentsPostLimit: envInt("SOURCE_UPDATE_COMMENT_POST_LIMIT", 80),
     commentsPerPost: envInt("SOURCE_UPDATE_COMMENTS_PER_POST", 100),
+    autoSnapshot: envBool("SOURCE_UPDATE_AUTO_SNAPSHOT", true),
   };
 }
 
@@ -122,6 +123,7 @@ async function enqueueSourceUpdateImports(
       batchSize: data.batchSize,
       sleepMs: data.sleepMs,
       sinceDateIso: sinceDateIsoFromDays(data.sinceDays),
+      snapshotAfterImport: data.autoSnapshot,
       importCommentsAfter: data.comments
         ? {
             mode: "new",
@@ -146,6 +148,7 @@ async function enqueueSourceUpdateImports(
     sources: sources.length,
     enqueued,
     comments: data.comments,
+    autoSnapshot: data.autoSnapshot,
   };
 }
 
@@ -304,6 +307,81 @@ async function enqueueCuratedSignalPreviewJobs(
   return jobs.length;
 }
 
+async function enqueueSnapshotAfterImport(
+  chatRef: string,
+  imported: number,
+  sourceSnapshotQueue: Queue<SourceSnapshotJobData, unknown, string>,
+) {
+  if (imported <= 0) {
+    return {
+      enqueued: false,
+      reason: "no_imported_content",
+      imported,
+    };
+  }
+
+  const source = await findStoredSource(prisma, chatRef);
+
+  if (!source) {
+    throw new Error(`Source not found in database: ${chatRef}`);
+  }
+
+  const activeSnapshot = await prisma.sourceSnapshot.findFirst({
+    where: {
+      sourceId: source.id,
+      status: {
+        in: ["pending", "running"],
+      },
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    select: {
+      id: true,
+      status: true,
+    },
+  });
+
+  if (activeSnapshot) {
+    return {
+      enqueued: false,
+      reason: "active_snapshot_exists",
+      snapshotId: activeSnapshot.id,
+      status: activeSnapshot.status,
+      imported,
+    };
+  }
+
+  const model = process.env.AI_MODEL || "unknown";
+  const snapshot = await prisma.sourceSnapshot.create({
+    data: {
+      sourceId: source.id,
+      kind: "channel_structured_snapshot",
+      title: `Снимок по каналу: ${source.title}`,
+      status: "pending",
+      model,
+      pipeline: initialSnapshotPipeline({
+        startedBy: "worker",
+        model,
+      }),
+    },
+  });
+  const snapshotJob = await sourceSnapshotQueue.add("snapshot", {
+    chat: sourceChatRef(source),
+    snapshotId: snapshot.id,
+  }, {
+    jobId: `snapshot-after-import--${snapshot.id}`,
+  });
+
+  return {
+    enqueued: true,
+    imported,
+    sourceId: source.id,
+    snapshotId: snapshot.id,
+    jobId: snapshotJob.id,
+  };
+}
+
 export function startWorkers() {
   const snapshotSectionConcurrency = envInt("SNAPSHOT_SECTION_WORKER_CONCURRENCY", 4);
   const snapshotCoverImageConcurrency = envInt("SNAPSHOT_COVER_IMAGE_WORKER_CONCURRENCY", 2);
@@ -360,6 +438,14 @@ export function startWorkers() {
         type: "exponential",
         delay: 5000,
       },
+      removeOnComplete: 100,
+      removeOnFail: 100,
+    },
+  });
+  const sourceSnapshotQueue = new Queue<SourceSnapshotJobData, unknown, string>(SOURCE_SNAPSHOT_QUEUE, {
+    connection: createRedisConnectionOptions(),
+    defaultJobOptions: {
+      attempts: 1,
       removeOnComplete: 100,
       removeOnFail: 100,
     },
@@ -506,6 +592,11 @@ export function startWorkers() {
           const commentJob = await commentImportQueue.add("comments", {
             chat: job.data.chat,
             ...job.data.importCommentsAfter,
+            snapshotAfterImport: job.data.snapshotAfterImport
+              ? {
+                  postImportedTotal: nextImportedTotal,
+                }
+              : undefined,
           }, {
             jobId: `comments-after-import--${job.id}`,
           });
@@ -513,6 +604,14 @@ export function startWorkers() {
           console.log(
             `[${TELEGRAM_IMPORT_QUEUE}] enqueued ${COMMENT_IMPORT_QUEUE} job ${commentJob.id} after post import`,
           );
+        } else if (job.data.snapshotAfterImport) {
+          const snapshotResult = await enqueueSnapshotAfterImport(
+            job.data.chat,
+            nextImportedTotal,
+            sourceSnapshotQueue,
+          );
+
+          console.log(`[${TELEGRAM_IMPORT_QUEUE}] snapshot-after-import result`, snapshotResult);
         }
 
         const finalResult = {
@@ -607,6 +706,17 @@ export function startWorkers() {
           console.log(
             `[${COMMENT_IMPORT_QUEUE}] enqueued ${MESSAGE_EMBEDDING_QUEUE} job ${embeddingJob.id} for ${result.imported} imported comments`,
           );
+        }
+
+        if (job.data.snapshotAfterImport) {
+          const imported = job.data.snapshotAfterImport.postImportedTotal + result.imported;
+          const snapshotResult = await enqueueSnapshotAfterImport(
+            job.data.chat,
+            imported,
+            sourceSnapshotQueue,
+          );
+
+          console.log(`[${COMMENT_IMPORT_QUEUE}] snapshot-after-import result`, snapshotResult);
         }
 
         console.log(`[${COMMENT_IMPORT_QUEUE}] job ${job.id} complete`, result);
@@ -999,7 +1109,7 @@ export function startWorkers() {
     });
   }
 
-  for (const queue of [contentEmbeddingQueue, contentFormattingQueue, sourceUpdateSchedulerQueue, commentImportQueue, telegramImportQueue, snapshotSectionQueue, sourceSignalCurationQueue, snapshotCoverImageQueue, signalPreviewImageQueue]) {
+  for (const queue of [contentEmbeddingQueue, contentFormattingQueue, sourceUpdateSchedulerQueue, commentImportQueue, telegramImportQueue, sourceSnapshotQueue, snapshotSectionQueue, sourceSignalCurationQueue, snapshotCoverImageQueue, signalPreviewImageQueue]) {
     queue.on("error", (error) => {
       console.error(`[${queue.name}] queue error:`, error);
     });
@@ -1021,6 +1131,7 @@ export function startWorkers() {
     sourceUpdateSchedulerQueue,
     commentImportQueue,
     telegramImportQueue,
+    sourceSnapshotQueue,
     snapshotSectionQueue,
     sourceSignalCurationQueue,
     snapshotCoverImageQueue,

@@ -33,6 +33,7 @@ async function shutdown(signal: string) {
     workers.contentEmbeddingQueue.close(),
     workers.contentFormattingQueue.close(),
     workers.commentImportQueue.close(),
+    workers.sourceSnapshotQueue.close(),
     workers.snapshotSectionQueue.close(),
     workers.sourceSignalCurationQueue.close(),
     workers.snapshotCoverImageQueue.close(),

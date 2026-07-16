@@ -19,6 +19,7 @@ export type TelegramImportJobData = {
     postLimit: number;
     commentsPerPost: number;
   };
+  snapshotAfterImport?: boolean;
 };
 
 export type ContentEmbeddingJobData = {
@@ -44,6 +45,7 @@ export type SourceUpdateSchedulerJobData = {
   comments: boolean;
   commentsPostLimit: number;
   commentsPerPost: number;
+  autoSnapshot: boolean;
 };
 
 export type CommentImportJobData = {
@@ -51,6 +53,9 @@ export type CommentImportJobData = {
   mode: "sync" | "new";
   postLimit: number;
   commentsPerPost: number;
+  snapshotAfterImport?: {
+    postImportedTotal: number;
+  };
 };
 
 export type SourceSnapshotJobData = {

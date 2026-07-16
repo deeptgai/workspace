@@ -67,6 +67,7 @@ function sourceUpdateSchedulerData(reason: "daily" | "manual") {
     comments: process.env.SOURCE_UPDATE_IMPORT_COMMENTS !== "false",
     commentsPostLimit: parsePositiveInteger(process.env.SOURCE_UPDATE_COMMENT_POST_LIMIT || "80", "SOURCE_UPDATE_COMMENT_POST_LIMIT"),
     commentsPerPost: parsePositiveInteger(process.env.SOURCE_UPDATE_COMMENTS_PER_POST || "100", "SOURCE_UPDATE_COMMENTS_PER_POST"),
+    autoSnapshot: process.env.SOURCE_UPDATE_AUTO_SNAPSHOT !== "false",
   } as const;
 }
 
@@ -454,6 +455,7 @@ program
         batchSize: parsePositiveInteger(options.batchSize, "--batch-size"),
         sleepMs: parseNonNegativeInteger(options.sleepMs, "--sleep-ms"),
         sinceDateIso: sinceDateIsoFromDays(parseNonNegativeInteger(options.sinceDays, "--since-days")),
+        snapshotAfterImport: process.env.SOURCE_UPDATE_AUTO_SNAPSHOT !== "false",
         importCommentsAfter: options.comments
           ? {
               mode: "new",
