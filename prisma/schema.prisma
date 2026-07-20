@@ -17,6 +17,7 @@ model Source {
   url             String?
   audienceCount   Int?
   metadata        Json?
+  autoUpdates     Boolean   @default(false)
   paidSignalKinds String[]  @default([])
   accessPriceUsdCents Int   @default(1000)
   createdAt       DateTime  @default(now())

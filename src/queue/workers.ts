@@ -99,6 +99,11 @@ async function enqueueSourceUpdateImports(
   telegramImportQueue: Queue<TelegramImportJobData, unknown, string>,
 ) {
   const sources = await prisma.source.findMany({
+    where: data.reason === "daily"
+      ? {
+          autoUpdates: true,
+        }
+      : undefined,
     orderBy: {
       createdAt: "asc",
     },

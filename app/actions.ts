@@ -295,3 +295,29 @@ export async function updateSourcePaidSectionsAction(formData: FormData) {
 
   redirect(`/sources/${chat.id}?paid=updated`);
 }
+
+export async function updateSourceAutoUpdatesAction(formData: FormData) {
+  const sourceId = String(formData.get("sourceId") ?? "");
+
+  if (!sourceId) {
+    throw new Error("Missing sourceId.");
+  }
+
+  const autoUpdates = String(formData.get("autoUpdates") ?? "") === "true";
+  const chat = await prisma.source.update({
+    where: {
+      id: sourceId,
+    },
+    data: {
+      autoUpdates,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  revalidatePath("/");
+  revalidatePath(`/sources/${chat.id}`);
+
+  redirect(`/sources/${chat.id}?autoUpdates=updated`);
+}

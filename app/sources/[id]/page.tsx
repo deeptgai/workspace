@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { FileDown, FilePlus2 } from "lucide-react";
+import { FileDown, FilePlus2, RefreshCw } from "lucide-react";
 import { sourcePaidSignalKinds } from "../../../src/sources/paidSignalKinds";
-import { createSnapshotAction, retrySnapshotSectionAction } from "../../actions";
+import { createSnapshotAction, retrySnapshotSectionAction, updateSourceAutoUpdatesAction } from "../../actions";
 import { AppShell, ItemsBadge, SnapshotsBadge, Stat, TypeBadge } from "../../components";
 import { compactText, formatDate, formatDateTime, formatNumber, getSourceDetail } from "../../data";
 import { sourceSlug } from "../../sourceSlug";
@@ -37,10 +37,10 @@ export default async function SourcePage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ snapshot?: string; paid?: string }>;
+  searchParams: Promise<{ snapshot?: string; paid?: string; autoUpdates?: string }>;
 }) {
   const { id } = await params;
-  const { snapshot, paid } = await searchParams;
+  const { snapshot, paid, autoUpdates } = await searchParams;
   const detail = await getSourceDetail(id);
 
   if (!detail) {
@@ -63,6 +63,18 @@ export default async function SourcePage({
           <TypeBadge type={chat.type} />
           <ItemsBadge count={chat._count.items} />
           <SnapshotsBadge count={chat._count.snapshots} />
+          <form action={updateSourceAutoUpdatesAction}>
+            <input type="hidden" name="sourceId" value={chat.id} />
+            <input type="hidden" name="autoUpdates" value={chat.autoUpdates ? "false" : "true"} />
+            <button
+              className={`button auto-updates-button${chat.autoUpdates ? " enabled" : ""}`}
+              type="submit"
+              title="Daily import and snapshot generation"
+            >
+              <RefreshCw size={15} />
+              Auto updates: {chat.autoUpdates ? "On" : "Off"}
+            </button>
+          </form>
           <PaidSectionsModal
             sourceId={chat.id}
             paidSignalKinds={paidSignalKinds}
@@ -88,6 +100,11 @@ export default async function SourcePage({
       ) : null}
       {paid === "updated" ? (
         <div className="notice">Paid section settings saved.</div>
+      ) : null}
+      {autoUpdates === "updated" ? (
+        <div className="notice">
+          Auto updates {chat.autoUpdates ? "enabled" : "disabled"}. Daily imports and snapshots will {chat.autoUpdates ? "run" : "not run"} for this source.
+        </div>
       ) : null}
 
       <div className="grid">

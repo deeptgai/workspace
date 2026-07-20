@@ -555,6 +555,12 @@ select {
   color: white;
 }
 
+.button.auto-updates-button.enabled {
+  border-color: #77b9a9;
+  background: #e7f4ef;
+  color: #14594f;
+}
+
 .button.danger {
   border-color: #e3b5b5;
   background: #fff0f0;

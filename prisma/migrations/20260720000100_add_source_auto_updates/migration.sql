@@ -1,0 +1,2 @@
+ALTER TABLE "Source"
+ADD COLUMN "autoUpdates" BOOLEAN NOT NULL DEFAULT false;
